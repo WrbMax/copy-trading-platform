@@ -1,7 +1,7 @@
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
-import { Route, Switch } from "wouter";
+import { Route, Router, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import Login from "./pages/Login";
@@ -25,7 +25,7 @@ import AdminFunds from "./pages/admin/AdminFunds";
 import AdminPoints from "./pages/admin/AdminPoints";
 import AdminRevenueShare from "./pages/admin/AdminRevenueShare";
 
-function Router() {
+function AppRouter() {
   return (
     <Switch>
       {/* Auth */}
@@ -56,13 +56,18 @@ function Router() {
   );
 }
 
+// Detect base path from the current URL (supports both / and /copy/ deployments)
+const BASE_PATH = import.meta.env.BASE_URL?.replace(/\/$/, '') || '';
+
 function App() {
   return (
     <ErrorBoundary>
       <ThemeProvider defaultTheme="dark">
         <TooltipProvider>
           <Toaster />
-          <Router />
+          <Router base={BASE_PATH}>
+            <AppRouter />
+          </Router>
         </TooltipProvider>
       </ThemeProvider>
     </ErrorBoundary>
