@@ -1,26 +1,25 @@
 /**
  * BSC Wallet Module
  * - HD wallet derivation for per-user deposit addresses
- * - BSCScan API polling for USDT (BEP-20) deposit detection
+ * - Dual deposit detection: BSCScan API + RPC balance snapshot
+ * - Dedup via txHash (BSCScan) and balance snapshot (RPC) to prevent double-crediting
  * - Auto-collection (sweep) to main wallet
- *
- * Uses system_config table to store:
- *   - hd_mnemonic_encrypted: encrypted HD wallet mnemonic
- *   - hd_next_index: next derivation index
- *   - main_wallet_address: main collection wallet address
- *   - bscscan_api_key: BSCScan API key for monitoring
- *
- * Uses deposits table to track detected on-chain deposits
+ * - Auto-scan timer (every 3 minutes)
  */
 
 import { ethers } from "ethers";
 import { encrypt, decrypt } from "./crypto";
 import { getSystemConfig, setSystemConfig, getDb } from "./db";
-import { deposits, users, fundTransactions } from "../drizzle/schema";
+import { deposits, users, fundTransactions, systemConfig } from "../drizzle/schema";
 import { eq, and, sql } from "drizzle-orm";
 
 // BSC Mainnet config
 const BSC_RPC_URL = "https://bsc-dataseed1.binance.org";
+const BSC_RPC_FALLBACKS = [
+  "https://bsc-dataseed2.binance.org",
+  "https://bsc-dataseed3.binance.org",
+  "https://bsc-dataseed1.defibit.io",
+];
 const BSC_CHAIN_ID = 56;
 const USDT_CONTRACT = "0x55d398326f99059fF775485246999027B3197955"; // BSC USDT
 
@@ -35,11 +34,34 @@ const ERC20_ABI = [
 // BSCScan API base
 const BSCSCAN_API = "https://api.bscscan.com/api";
 
+// Scan interval in ms (3 minutes)
+const SCAN_INTERVAL = 3 * 60 * 1000;
+
+// Track if auto-scan is running
+let autoScanTimer: ReturnType<typeof setInterval> | null = null;
+
+// ─── Helper: get provider with fallback ──────────────────────────────────────
+
+function getProvider(): ethers.JsonRpcProvider {
+  return new ethers.JsonRpcProvider(BSC_RPC_URL, BSC_CHAIN_ID);
+}
+
+async function getProviderWithFallback(): Promise<ethers.JsonRpcProvider> {
+  const urls = [BSC_RPC_URL, ...BSC_RPC_FALLBACKS];
+  for (const url of urls) {
+    try {
+      const provider = new ethers.JsonRpcProvider(url, BSC_CHAIN_ID);
+      await provider.getBlockNumber(); // quick health check
+      return provider;
+    } catch {
+      continue;
+    }
+  }
+  return new ethers.JsonRpcProvider(BSC_RPC_URL, BSC_CHAIN_ID);
+}
+
 // ─── HD Wallet Functions ──────────────────────────────────────────────────────
 
-/**
- * Initialize HD wallet with a new mnemonic (call once during setup)
- */
 export async function initHDWallet(): Promise<{ mnemonic: string; mainAddress: string }> {
   const existing = await getSystemConfig("hd_mnemonic_encrypted");
   if (existing) {
@@ -49,23 +71,18 @@ export async function initHDWallet(): Promise<{ mnemonic: string; mainAddress: s
     return { mnemonic, mainAddress: mainWallet.address };
   }
 
-  // Generate new mnemonic
   const wallet = ethers.Wallet.createRandom();
   const mnemonic = wallet.mnemonic!.phrase;
   const encrypted = encrypt(mnemonic);
 
   await setSystemConfig("hd_mnemonic_encrypted", encrypted);
-  await setSystemConfig("hd_next_index", "1"); // index 0 is main wallet
+  await setSystemConfig("hd_next_index", "1");
   await setSystemConfig("main_wallet_address", wallet.address);
 
   return { mnemonic, mainAddress: wallet.address };
 }
 
-/**
- * Import existing HD wallet from mnemonic
- */
 export async function importHDWallet(mnemonic: string): Promise<{ mainAddress: string }> {
-  // Validate mnemonic
   if (!ethers.Mnemonic.isValidMnemonic(mnemonic)) {
     throw new Error("Invalid mnemonic phrase");
   }
@@ -81,9 +98,6 @@ export async function importHDWallet(mnemonic: string): Promise<{ mainAddress: s
   return { mainAddress: mainWallet.address };
 }
 
-/**
- * Derive a new deposit address for a user
- */
 export async function deriveDepositAddress(userId: number): Promise<{ address: string; index: number }> {
   const mnemonicEncrypted = await getSystemConfig("hd_mnemonic_encrypted");
   if (!mnemonicEncrypted) throw new Error("HD wallet not initialized");
@@ -95,22 +109,16 @@ export async function deriveDepositAddress(userId: number): Promise<{ address: s
   const hdNode = ethers.HDNodeWallet.fromPhrase(mnemonic, undefined, "m/44'/60'/0'/0");
   const childWallet = hdNode.deriveChild(nextIndex);
 
-  // Store the mapping in system_config as JSON
-  // Key: deposit_addr_{userId}, Value: JSON { address, index }
   await setSystemConfig(`deposit_addr_${userId}`, JSON.stringify({
     address: childWallet.address,
     index: nextIndex,
   }));
 
-  // Increment next index
   await setSystemConfig("hd_next_index", (nextIndex + 1).toString());
 
   return { address: childWallet.address, index: nextIndex };
 }
 
-/**
- * Get user's deposit address (derive if not exists)
- */
 export async function getUserDepositAddress(userId: number): Promise<{ address: string; index: number } | null> {
   const data = await getSystemConfig(`deposit_addr_${userId}`);
   if (data) {
@@ -119,18 +127,12 @@ export async function getUserDepositAddress(userId: number): Promise<{ address: 
   return null;
 }
 
-/**
- * Get or create user's deposit address
- */
 export async function getOrCreateDepositAddress(userId: number): Promise<{ address: string; index: number }> {
   const existing = await getUserDepositAddress(userId);
   if (existing) return existing;
   return deriveDepositAddress(userId);
 }
 
-/**
- * Get the private key for a derived address (for collection)
- */
 async function getPrivateKeyForIndex(index: number): Promise<string> {
   const mnemonicEncrypted = await getSystemConfig("hd_mnemonic_encrypted");
   if (!mnemonicEncrypted) throw new Error("HD wallet not initialized");
@@ -139,36 +141,27 @@ async function getPrivateKeyForIndex(index: number): Promise<string> {
   return hdNode.deriveChild(index).privateKey;
 }
 
-/**
- * Get main wallet private key (index 0)
- */
 async function getMainWalletPrivateKey(): Promise<string> {
   return getPrivateKeyForIndex(0);
 }
 
-// ─── BSCScan Monitoring ───────────────────────────────────────────────────────
+// ─── Balance Queries ─────────────────────────────────────────────────────────
 
-/**
- * Check USDT balance of an address via BSC RPC
- */
 export async function getUSDTBalance(address: string): Promise<string> {
   try {
-    const provider = new ethers.JsonRpcProvider(BSC_RPC_URL, BSC_CHAIN_ID);
+    const provider = await getProviderWithFallback();
     const contract = new ethers.Contract(USDT_CONTRACT, ERC20_ABI, provider);
     const balance = await contract.balanceOf(address);
-    return ethers.formatUnits(balance, 18); // BSC USDT is 18 decimals
+    return ethers.formatUnits(balance, 18);
   } catch (error) {
     console.error(`[BSC] Failed to get USDT balance for ${address}:`, error);
     return "0";
   }
 }
 
-/**
- * Get BNB balance of an address
- */
 export async function getBNBBalance(address: string): Promise<string> {
   try {
-    const provider = new ethers.JsonRpcProvider(BSC_RPC_URL, BSC_CHAIN_ID);
+    const provider = await getProviderWithFallback();
     const balance = await provider.getBalance(address);
     return ethers.formatEther(balance);
   } catch (error) {
@@ -177,10 +170,9 @@ export async function getBNBBalance(address: string): Promise<string> {
   }
 }
 
-/**
- * Fetch USDT transfer events for an address from BSCScan
- */
-export async function fetchUSDTTransfers(
+// ─── BSCScan API Detection (Method 1) ────────────────────────────────────────
+
+async function fetchUSDTTransfers(
   address: string,
   startBlock = 0,
   apiKey?: string
@@ -196,10 +188,14 @@ export async function fetchUSDTTransfers(
     const key = apiKey || (await getSystemConfig("bscscan_api_key")) || "";
     const url = `${BSCSCAN_API}?module=account&action=tokentx&contractaddress=${USDT_CONTRACT}&address=${address}&startblock=${startBlock}&endblock=99999999&sort=asc&apikey=${key}`;
 
-    const response = await fetch(url);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    const response = await fetch(url, { signal: controller.signal });
+    clearTimeout(timeout);
     const data = await response.json();
 
     if (data.status !== "1" || !Array.isArray(data.result)) {
+      console.log(`[BSCScan] No results for ${address}: ${data.message || "unknown"}`);
       return [];
     }
 
@@ -213,35 +209,140 @@ export async function fetchUSDTTransfers(
         blockNumber: parseInt(tx.blockNumber),
         timeStamp: parseInt(tx.timeStamp),
       }));
-  } catch (error) {
-    console.error(`[BSCScan] Failed to fetch transfers for ${address}:`, error);
+  } catch (error: any) {
+    console.error(`[BSCScan] Failed to fetch transfers for ${address}:`, error.message);
     return [];
   }
 }
 
-// ─── Deposit Detection & Auto-Credit ──────────────────────────────────────────
+// ─── RPC Balance Snapshot Detection (Method 2) ───────────────────────────────
 
 /**
- * Scan all user deposit addresses for new USDT deposits
- * This should be called periodically (e.g., every 2-5 minutes)
+ * Detect deposits by comparing current USDT balance with last known snapshot.
+ * If balance increased, record the difference as a deposit.
+ * Uses balance_snapshot_{address} in system_config for tracking.
+ */
+async function detectByBalanceChange(
+  userId: number,
+  address: string,
+  db: NonNullable<Awaited<ReturnType<typeof getDb>>>
+): Promise<{ detected: boolean; amount: number }> {
+  const snapshotKey = `balance_snapshot_${address.toLowerCase()}`;
+  const lastSnapshotStr = await getSystemConfig(snapshotKey) ?? "0";
+  const lastSnapshot = parseFloat(lastSnapshotStr);
+
+  const currentBalanceStr = await getUSDTBalance(address);
+  const currentBalance = parseFloat(currentBalanceStr);
+
+  // Save current balance as new snapshot
+  await setSystemConfig(snapshotKey, currentBalance.toFixed(8));
+
+  // If balance increased, there's a new deposit
+  const diff = currentBalance - lastSnapshot;
+  if (diff < 0.01) {
+    // No significant increase (< 0.01 USDT)
+    return { detected: false, amount: 0 };
+  }
+
+  return { detected: true, amount: diff };
+}
+
+// ─── Unified Deposit Detection & Auto-Credit ─────────────────────────────────
+
+/**
+ * Check if a deposit with this txHash already exists (for BSCScan dedup)
+ */
+async function isTxHashRecorded(db: NonNullable<Awaited<ReturnType<typeof getDb>>>, txHash: string): Promise<boolean> {
+  const existing = await db.select().from(deposits)
+    .where(eq(deposits.txHash, txHash)).limit(1);
+  return existing.length > 0;
+}
+
+/**
+ * Credit deposit to user balance with proper dedup
+ */
+async function creditDeposit(
+  db: NonNullable<Awaited<ReturnType<typeof getDb>>>,
+  userId: number,
+  amount: number,
+  address: string,
+  txHash: string | null,
+  fromAddress: string | null,
+  source: string
+): Promise<boolean> {
+  // Final dedup: if txHash provided, check it's not already recorded
+  if (txHash) {
+    const exists = await isTxHashRecorded(db, txHash);
+    if (exists) {
+      console.log(`[Scan] Skipping duplicate txHash: ${txHash}`);
+      return false;
+    }
+  }
+
+  // Record the deposit
+  await db.insert(deposits).values({
+    userId,
+    amount: amount.toFixed(8),
+    txHash: txHash || `rpc_${Date.now()}_${address.substring(0, 8)}`,
+    fromAddress: fromAddress || "unknown",
+    toAddress: address,
+    proofNote: source,
+    status: "approved",
+    reviewedAt: new Date(),
+  });
+
+  // Credit to user balance
+  const [user] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
+  if (user) {
+    const newBalance = parseFloat(user.balance || "0") + amount;
+    await db.update(users).set({ balance: newBalance.toFixed(8) }).where(eq(users.id, userId));
+    await db.insert(fundTransactions).values({
+      userId,
+      type: "deposit",
+      amount: amount.toFixed(8),
+      balanceAfter: newBalance.toFixed(8),
+      note: txHash
+        ? `BSC链上充值自动到账 TxHash: ${txHash.substring(0, 16)}...`
+        : `BSC链上充值自动到账（余额检测）`,
+    });
+    console.log(`[Scan] Credited ${amount.toFixed(4)} USDT to user ${userId} via ${source}`);
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Scan all user deposit addresses for new USDT deposits.
+ * Dual detection: BSCScan API (precise txHash) + RPC balance snapshot (fallback).
+ * Dedup ensures no double-crediting.
  */
 export async function scanDeposits(): Promise<{
   detected: number;
   credited: number;
   errors: string[];
+  method: string;
 }> {
   const db = await getDb();
-  if (!db) return { detected: 0, credited: 0, errors: ["Database not available"] };
+  if (!db) return { detected: 0, credited: 0, errors: ["Database not available"], method: "none" };
+
+  const mnemonicExists = await getSystemConfig("hd_mnemonic_encrypted");
+  if (!mnemonicExists) return { detected: 0, credited: 0, errors: ["HD wallet not initialized"], method: "none" };
 
   const errors: string[] = [];
   let detected = 0;
   let credited = 0;
+  let methodUsed = "none";
 
   try {
     // Get all user deposit address configs
-    const configs = await db.select().from(
-      (await import("../drizzle/schema")).systemConfig
-    ).where(sql`\`key\` LIKE 'deposit_addr_%'`);
+    const configs = await db.select().from(systemConfig)
+      .where(sql`\`key\` LIKE 'deposit_addr_%'`);
+
+    if (configs.length === 0) {
+      return { detected: 0, credited: 0, errors: [], method: "no_addresses" };
+    }
+
+    const hasBscscanKey = !!(await getSystemConfig("bscscan_api_key"));
 
     for (const config of configs) {
       try {
@@ -252,57 +353,78 @@ export async function scanDeposits(): Promise<{
         const addrData = JSON.parse(config.value);
         const address = addrData.address;
 
-        // Get last checked block for this address
-        const lastBlockKey = `last_block_${address}`;
-        const lastBlockStr = await getSystemConfig(lastBlockKey) ?? "0";
-        const lastBlock = parseInt(lastBlockStr, 10);
+        let bscscanFound = false;
 
-        // Fetch new transfers
-        const transfers = await fetchUSDTTransfers(address, lastBlock + 1);
+        // ── Method 1: BSCScan API (if API key available or public endpoint) ──
+        try {
+          const lastBlockKey = `last_block_${address.toLowerCase()}`;
+          const lastBlockStr = await getSystemConfig(lastBlockKey) ?? "0";
+          const lastBlock = parseInt(lastBlockStr, 10);
 
-        for (const tx of transfers) {
-          // Check if already recorded
-          const existing = await db.select().from(deposits)
-            .where(eq(deposits.txHash, tx.hash)).limit(1);
+          const transfers = await fetchUSDTTransfers(address, lastBlock > 0 ? lastBlock + 1 : 0);
 
-          if (existing.length > 0) continue;
+          if (transfers.length > 0) {
+            methodUsed = hasBscscanKey ? "bscscan_api" : "bscscan_public";
 
-          const amount = parseFloat(tx.value);
-          if (amount <= 0) continue;
+            for (const tx of transfers) {
+              const amount = parseFloat(tx.value);
+              if (amount <= 0) continue;
 
-          // Record the deposit as auto-detected and approved
-          await db.insert(deposits).values({
-            userId,
-            amount: amount.toFixed(8),
-            txHash: tx.hash,
-            fromAddress: tx.from,
-            toAddress: address,
-            proofNote: "链上自动检测",
-            status: "approved",
-            reviewedAt: new Date(),
-          });
-          detected++;
+              const didCredit = await creditDeposit(
+                db, userId, amount, address, tx.hash, tx.from,
+                "BSCScan API 自动检测"
+              );
+              if (didCredit) {
+                detected++;
+                credited++;
+                bscscanFound = true;
+              }
 
-          // Auto-credit to user balance
-          const [user] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
-          if (user) {
-            const newBalance = parseFloat(user.balance || "0") + amount;
-            await db.update(users).set({ balance: newBalance.toFixed(8) }).where(eq(users.id, userId));
-            await db.insert(fundTransactions).values({
-              userId,
-              type: "deposit",
-              amount: amount.toFixed(8),
-              balanceAfter: newBalance.toFixed(8),
-              note: `BSC链上充值自动到账 TxHash: ${tx.hash.substring(0, 10)}...`,
-            });
-            credited++;
+              // Update last checked block
+              if (tx.blockNumber > lastBlock) {
+                await setSystemConfig(lastBlockKey, tx.blockNumber.toString());
+              }
+            }
           }
-
-          // Update last checked block
-          if (tx.blockNumber > lastBlock) {
-            await setSystemConfig(lastBlockKey, tx.blockNumber.toString());
-          }
+        } catch (bscscanErr: any) {
+          console.error(`[Scan] BSCScan method failed for ${address}:`, bscscanErr.message);
+          // Fall through to RPC method
         }
+
+        // ── Method 2: RPC Balance Snapshot (fallback / supplement) ──
+        // Only use if BSCScan didn't find anything new
+        if (!bscscanFound) {
+          try {
+            const { detected: balanceDetected, amount } = await detectByBalanceChange(userId, address, db);
+            if (balanceDetected && amount > 0) {
+              methodUsed = methodUsed === "none" ? "rpc_balance" : methodUsed + "+rpc_balance";
+
+              // For RPC detection, we don't have txHash, use a unique identifier
+              const rpcTxId = `rpc_${Date.now()}_${address.substring(2, 10)}`;
+
+              // Check we haven't already credited this via BSCScan in a previous scan
+              // by verifying the amount makes sense (balance actually increased)
+              const didCredit = await creditDeposit(
+                db, userId, amount, address, null, null,
+                "RPC余额变化检测"
+              );
+              if (didCredit) {
+                detected++;
+                credited++;
+              }
+            }
+          } catch (rpcErr: any) {
+            errors.push(`RPC balance check for user ${userId}: ${rpcErr.message}`);
+          }
+        } else {
+          // BSCScan found deposits, update balance snapshot to current to prevent RPC double-credit next time
+          try {
+            const currentBalance = await getUSDTBalance(address);
+            const snapshotKey = `balance_snapshot_${address.toLowerCase()}`;
+            await setSystemConfig(snapshotKey, parseFloat(currentBalance).toFixed(8));
+          } catch {}
+        }
+
       } catch (err: any) {
         errors.push(`User ${config.key}: ${err.message}`);
       }
@@ -311,17 +433,15 @@ export async function scanDeposits(): Promise<{
     errors.push(`Scan error: ${err.message}`);
   }
 
-  return { detected, credited, errors };
+  console.log(`[Scan] Complete: detected=${detected}, credited=${credited}, method=${methodUsed}, errors=${errors.length}`);
+  return { detected, credited, errors, method: methodUsed };
 }
 
 // ─── Auto Collection (Sweep) ──────────────────────────────────────────────────
 
-/**
- * Send BNB gas to a child address for USDT transfer
- */
 async function sendGasToChild(childAddress: string, gasAmount = "0.001"): Promise<string> {
   const mainPrivateKey = await getMainWalletPrivateKey();
-  const provider = new ethers.JsonRpcProvider(BSC_RPC_URL, BSC_CHAIN_ID);
+  const provider = await getProviderWithFallback();
   const mainWallet = new ethers.Wallet(mainPrivateKey, provider);
 
   const tx = await mainWallet.sendTransaction({
@@ -332,12 +452,9 @@ async function sendGasToChild(childAddress: string, gasAmount = "0.001"): Promis
   return tx.hash;
 }
 
-/**
- * Sweep USDT from a child address to the main wallet
- */
 async function sweepUSDT(childIndex: number, childAddress: string, mainAddress: string): Promise<string> {
   const childPrivateKey = await getPrivateKeyForIndex(childIndex);
-  const provider = new ethers.JsonRpcProvider(BSC_RPC_URL, BSC_CHAIN_ID);
+  const provider = await getProviderWithFallback();
   const childWallet = new ethers.Wallet(childPrivateKey, provider);
   const usdtContract = new ethers.Contract(USDT_CONTRACT, ERC20_ABI, childWallet);
 
@@ -349,10 +466,6 @@ async function sweepUSDT(childIndex: number, childAddress: string, mainAddress: 
   return tx.hash;
 }
 
-/**
- * Collect USDT from all child addresses to main wallet
- * This should be called periodically (e.g., every 30 minutes)
- */
 export async function collectDeposits(): Promise<{
   collected: number;
   totalAmount: string;
@@ -369,9 +482,8 @@ export async function collectDeposits(): Promise<{
   let totalAmount = 0;
 
   try {
-    const configs = await db.select().from(
-      (await import("../drizzle/schema")).systemConfig
-    ).where(sql`\`key\` LIKE 'deposit_addr_%'`);
+    const configs = await db.select().from(systemConfig)
+      .where(sql`\`key\` LIKE 'deposit_addr_%'`);
 
     for (const config of configs) {
       try {
@@ -379,20 +491,15 @@ export async function collectDeposits(): Promise<{
         const address = addrData.address;
         const index = addrData.index;
 
-        // Check USDT balance
         const balance = await getUSDTBalance(address);
         const balanceNum = parseFloat(balance);
 
-        // Only collect if balance > 1 USDT (to avoid dust)
         if (balanceNum < 1) continue;
 
-        // Check if child has enough BNB for gas
         const bnbBalance = await getBNBBalance(address);
         if (parseFloat(bnbBalance) < 0.0005) {
-          // Send gas from main wallet
           try {
             await sendGasToChild(address, "0.001");
-            // Wait a bit for gas to arrive
             await new Promise(resolve => setTimeout(resolve, 5000));
           } catch (gasErr: any) {
             errors.push(`Gas send to ${address} failed: ${gasErr.message}`);
@@ -400,12 +507,15 @@ export async function collectDeposits(): Promise<{
           }
         }
 
-        // Sweep USDT to main wallet
         const txHash = await sweepUSDT(index, address, mainAddress);
         if (txHash) {
           collected++;
           totalAmount += balanceNum;
           console.log(`[BSC] Collected ${balance} USDT from ${address} -> ${mainAddress}, tx: ${txHash}`);
+
+          // Update balance snapshot after collection
+          const snapshotKey = `balance_snapshot_${address.toLowerCase()}`;
+          await setSystemConfig(snapshotKey, "0");
         }
       } catch (err: any) {
         errors.push(`Collection from ${config.key}: ${err.message}`);
@@ -427,10 +537,13 @@ export async function getWalletStatus(): Promise<{
   mainBNBBalance: string;
   totalUserAddresses: number;
   nextIndex: number;
+  autoScanActive: boolean;
+  lastScanTime: string | null;
 }> {
   const mainAddress = await getSystemConfig("main_wallet_address");
   const nextIndex = parseInt(await getSystemConfig("hd_next_index") ?? "0", 10);
   const mnemonicExists = !!(await getSystemConfig("hd_mnemonic_encrypted"));
+  const lastScanTime = await getSystemConfig("last_scan_time");
 
   let mainUSDTBalance = "0";
   let mainBNBBalance = "0";
@@ -443,9 +556,8 @@ export async function getWalletStatus(): Promise<{
 
   const db = await getDb();
   if (db) {
-    const [result] = await db.select({ count: sql<number>`count(*)` }).from(
-      (await import("../drizzle/schema")).systemConfig
-    ).where(sql`\`key\` LIKE 'deposit_addr_%'`);
+    const [result] = await db.select({ count: sql<number>`count(*)` }).from(systemConfig)
+      .where(sql`\`key\` LIKE 'deposit_addr_%'`);
     totalUserAddresses = Number(result.count);
   }
 
@@ -456,5 +568,71 @@ export async function getWalletStatus(): Promise<{
     mainBNBBalance,
     totalUserAddresses,
     nextIndex,
+    autoScanActive: autoScanTimer !== null,
+    lastScanTime: lastScanTime ?? null,
   };
+}
+
+// ─── Auto Scan Timer ─────────────────────────────────────────────────────────
+
+/**
+ * Start automatic deposit scanning every 3 minutes.
+ * Called on server startup.
+ */
+export function startAutoScan(): void {
+  if (autoScanTimer) {
+    console.log("[AutoScan] Already running, skipping start");
+    return;
+  }
+
+  console.log(`[AutoScan] Starting automatic deposit scan every ${SCAN_INTERVAL / 1000}s`);
+
+  // Run first scan after 30 seconds (let server fully initialize)
+  setTimeout(async () => {
+    try {
+      const mnemonicExists = await getSystemConfig("hd_mnemonic_encrypted");
+      if (mnemonicExists) {
+        console.log("[AutoScan] Running initial scan...");
+        const result = await scanDeposits();
+        await setSystemConfig("last_scan_time", new Date().toISOString());
+        console.log(`[AutoScan] Initial scan result: detected=${result.detected}, credited=${result.credited}, method=${result.method}`);
+      } else {
+        console.log("[AutoScan] HD wallet not initialized, skipping initial scan");
+      }
+    } catch (err: any) {
+      console.error("[AutoScan] Initial scan error:", err.message);
+    }
+  }, 30000);
+
+  // Set up recurring scan
+  autoScanTimer = setInterval(async () => {
+    try {
+      const mnemonicExists = await getSystemConfig("hd_mnemonic_encrypted");
+      if (!mnemonicExists) return;
+
+      console.log("[AutoScan] Running scheduled scan...");
+      const result = await scanDeposits();
+      await setSystemConfig("last_scan_time", new Date().toISOString());
+
+      if (result.detected > 0) {
+        console.log(`[AutoScan] Found ${result.detected} new deposits, credited ${result.credited}`);
+      }
+      if (result.errors.length > 0) {
+        console.warn(`[AutoScan] Scan errors:`, result.errors);
+      }
+    } catch (err: any) {
+      console.error("[AutoScan] Scheduled scan error:", err.message);
+    }
+  }, SCAN_INTERVAL);
+}
+
+/**
+ * Stop automatic scanning
+ */
+export function stopAutoScan(): void {
+  if (autoScanTimer) {
+    clearInterval(autoScanTimer);
+    autoScanTimer = null;
+    console.log("[AutoScan] Stopped");
+  }
 }

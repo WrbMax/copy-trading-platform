@@ -26,6 +26,8 @@ import {
   collectDeposits,
   getUSDTBalance,
   getBNBBalance,
+  startAutoScan,
+  stopAutoScan,
 } from "../bsc-wallet";
 
 export const fundsRouter = router({
@@ -303,5 +305,16 @@ export const fundsRouter = router({
       const usdtBalance = await getUSDTBalance(input.address);
       const bnbBalance = await getBNBBalance(input.address);
       return { usdtBalance, bnbBalance };
+    }),
+
+  adminToggleAutoScan: adminProcedure
+    .input(z.object({ enabled: z.boolean() }))
+    .mutation(async ({ input }) => {
+      if (input.enabled) {
+        startAutoScan();
+      } else {
+        stopAutoScan();
+      }
+      return { success: true, autoScanActive: input.enabled };
     }),
 });

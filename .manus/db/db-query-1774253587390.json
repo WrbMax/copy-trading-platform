@@ -1,0 +1,26 @@
+{
+  "query": "SELECT d.id, d.userId, d.amount, d.txHash, d.fromAddress, d.toAddress, d.proofNote, d.status, d.createdAt FROM deposits d ORDER BY d.id DESC LIMIT 5; SELECT ft.id, ft.userId, ft.type, ft.amount, ft.balanceAfter, ft.note, ft.createdAt FROM fund_transactions ft ORDER BY ft.id DESC LIMIT 5; SELECT id, name, balance, points FROM users WHERE id = 214;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 2yRRhmQmjmz9LMP.root --database 3xjoeN6gTpdmQoJAnkq7pe --execute SELECT d.id, d.userId, d.amount, d.txHash, d.fromAddress, d.toAddress, d.proofNote, d.status, d.createdAt FROM deposits d ORDER BY d.id DESC LIMIT 5; SELECT ft.id, ft.userId, ft.type, ft.amount, ft.balanceAfter, ft.note, ft.createdAt FROM fund_transactions ft ORDER BY ft.id DESC LIMIT 5; SELECT id, name, balance, points FROM users WHERE id = 214;",
+  "rows": [
+    {
+      "id": "1",
+      "userId": "214",
+      "amount": "0.10000000",
+      "txHash": "rpc_1774253555274_0x1F705b",
+      "fromAddress": "unknown",
+      "toAddress": "0x1F705ba9da38F5f17A732CB60d8740b682893E87",
+      "proofNote": "RPC余额变化检测",
+      "status": "approved",
+      "createdAt": "2026-03-23 08:12:35"
+    }
+  ],
+  "messages": [
+    "id\tuserId\ttype\tamount\tbalanceAfter\tnote\tcreatedAt",
+    "1\t214\tdeposit\t0.10000000\t0.10000000\tBSC链上充值自动到账（余额检测）\t2026-03-23 08:12:36",
+    "id\tname\tbalance\tpoints",
+    "214\thirs C\t0.10000000\t0"
+  ],
+  "stdout": "id\tuserId\tamount\ttxHash\tfromAddress\ttoAddress\tproofNote\tstatus\tcreatedAt\n1\t214\t0.10000000\trpc_1774253555274_0x1F705b\tunknown\t0x1F705ba9da38F5f17A732CB60d8740b682893E87\tRPC余额变化检测\tapproved\t2026-03-23 08:12:35\nid\tuserId\ttype\tamount\tbalanceAfter\tnote\tcreatedAt\n1\t214\tdeposit\t0.10000000\t0.10000000\tBSC链上充值自动到账（余额检测）\t2026-03-23 08:12:36\nid\tname\tbalance\tpoints\n214\thirs C\t0.10000000\t0\n",
+  "stderr": "",
+  "execution_time_ms": 2124
+}

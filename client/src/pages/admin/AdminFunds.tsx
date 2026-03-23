@@ -79,6 +79,11 @@ export default function AdminFunds() {
     onError: (e: any) => toast.error(e.message),
   });
 
+  const toggleAutoScanMutation = trpc.funds.adminToggleAutoScan.useMutation({
+    onSuccess: (data) => { toast.success(data.autoScanActive ? "自动扫描已开启" : "自动扫描已关闭"); refetchWallet(); },
+    onError: (e: any) => toast.error(e.message),
+  });
+
   const reviewDepMutation = trpc.funds.adminReviewDeposit.useMutation({
     onSuccess: () => { toast.success("审核完成"); utils.funds.adminDeposits.invalidate(); setReviewItem(null); },
     onError: (e: any) => toast.error(e.message),
@@ -196,6 +201,33 @@ export default function AdminFunds() {
                       </div>
                     </div>
 
+                    {/* Auto-Scan Status */}
+                    <div className="p-3 rounded-lg bg-secondary/30 border border-border">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-medium">自动扫描</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            {walletStatus.autoScanActive
+                              ? "每3分钟自动检测所有用户地址的USDT入账"
+                              : "自动扫描已关闭，需手动点击扫描按钮"}
+                          </p>
+                          {walletStatus.lastScanTime && (
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                              上次扫描: {new Date(walletStatus.lastScanTime).toLocaleString()}
+                            </p>
+                          )}
+                        </div>
+                        <Button
+                          size="sm"
+                          variant={walletStatus.autoScanActive ? "destructive" : "default"}
+                          onClick={() => toggleAutoScanMutation.mutate({ enabled: !walletStatus.autoScanActive })}
+                          disabled={toggleAutoScanMutation.isPending}
+                        >
+                          {walletStatus.autoScanActive ? "关闭" : "开启"}
+                        </Button>
+                      </div>
+                    </div>
+
                     {/* Scan & Collect Buttons */}
                     <div className="grid grid-cols-2 gap-3">
                       <Button
@@ -205,7 +237,7 @@ export default function AdminFunds() {
                         disabled={scanMutation.isPending}
                       >
                         <RefreshCw className={`w-4 h-4 mr-2 ${scanMutation.isPending ? "animate-spin" : ""}`} />
-                        {scanMutation.isPending ? "扫描中..." : "扫描充值"}
+                        {scanMutation.isPending ? "扫描中..." : "手动扫描"}
                       </Button>
                       <Button
                         variant="outline"
@@ -218,7 +250,7 @@ export default function AdminFunds() {
                       </Button>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      「扫描充值」检测所有用户地址的USDT入账并自动到账；「归集资金」将用户地址的USDT转到主地址。
+                      「手动扫描」立即检测所有用户地址的USDT入账（双重检测：BSCScan API + RPC余额）；「归集资金」将用户地址的USDT转到主地址。
                     </p>
                   </div>
                 ) : (

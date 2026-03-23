@@ -1,0 +1,24 @@
+{
+  "query": "SELECT id, name, email, balance, role FROM users ORDER BY id;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 2yRRhmQmjmz9LMP.root --database 3xjoeN6gTpdmQoJAnkq7pe --execute SELECT id, name, email, balance, role FROM users ORDER BY id;",
+  "rows": [
+    {
+      "id": "1",
+      "name": "langzhidou",
+      "email": "rmqnw88594@fy0814.cn",
+      "balance": "0.00000000",
+      "role": "admin"
+    },
+    {
+      "id": "214",
+      "name": "hirs C",
+      "email": "xuhailing945@gmail.com",
+      "balance": "0.00000000",
+      "role": "user"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\tname\temail\tbalance\trole\n1\tlangzhidou\trmqnw88594@fy0814.cn\t0.00000000\tadmin\n214\thirs C\txuhailing945@gmail.com\t0.00000000\tuser\n",
+  "stderr": "",
+  "execution_time_ms": 1645
+}
