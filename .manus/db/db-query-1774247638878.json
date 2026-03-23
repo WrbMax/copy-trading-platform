@@ -1,0 +1,28 @@
+{
+  "query": "SELECT id, name, symbol, tradingPair, referencePosition, webhookSecret, apiKeyEncrypted FROM signal_sources;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 2yRRhmQmjmz9LMP.root --database 3xjoeN6gTpdmQoJAnkq7pe --execute SELECT id, name, symbol, tradingPair, referencePosition, webhookSecret, apiKeyEncrypted FROM signal_sources;",
+  "rows": [
+    {
+      "id": "1",
+      "name": "以太坊指标策略",
+      "symbol": "ETH",
+      "tradingPair": "ETHUSDT",
+      "referencePosition": "1500.00000000",
+      "webhookSecret": "NULL",
+      "apiKeyEncrypted": "NULL"
+    },
+    {
+      "id": "2",
+      "name": "比特币指标策略",
+      "symbol": "BTC",
+      "tradingPair": "BTCUSDT",
+      "referencePosition": "1600.00000000",
+      "webhookSecret": "NULL",
+      "apiKeyEncrypted": "NULL"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\tname\tsymbol\ttradingPair\treferencePosition\twebhookSecret\tapiKeyEncrypted\n1\t以太坊指标策略\tETH\tETHUSDT\t1500.00000000\tNULL\tNULL\n2\t比特币指标策略\tBTC\tBTCUSDT\t1600.00000000\tNULL\tNULL\n",
+  "stderr": "",
+  "execution_time_ms": 1716
+}

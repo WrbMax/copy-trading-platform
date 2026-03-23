@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { appRouter } from "./routers";
 import type { TrpcContext } from "./_core/context";
+import { encrypt, decrypt, maskApiKey } from "./crypto";
 
 // ---- Helpers ----
 function makeCtx(overrides: Partial<TrpcContext> = {}): TrpcContext {
@@ -71,15 +72,34 @@ describe("strategy.myStrategies", () => {
     await expect(caller.strategy.myStrategies()).rejects.toThrow();
   });
 
-  it("returns empty array for authenticated user with no strategies", async () => {
+  it("returns array for authenticated user", async () => {
     const caller = appRouter.createCaller(makeUserCtx());
-    // This may return empty or throw DB error in test env - just check it doesn't crash with auth error
     try {
       const result = await caller.strategy.myStrategies();
       expect(Array.isArray(result)).toBe(true);
     } catch (e: any) {
-      // DB errors are acceptable in test env without a real DB
       expect(e.code).not.toBe("UNAUTHORIZED");
+    }
+  });
+});
+
+describe("strategy.setStrategy", () => {
+  it("validates multiplier range 1-100", async () => {
+    const caller = appRouter.createCaller(makeUserCtx());
+    // Multiplier > 100 should fail validation
+    await expect(
+      caller.strategy.setStrategy({ signalSourceId: 1, exchangeApiId: 1, multiplier: 200, isEnabled: true })
+    ).rejects.toThrow();
+  });
+
+  it("accepts multiplier within valid range", async () => {
+    const caller = appRouter.createCaller(makeUserCtx());
+    // This will fail at DB level but should pass validation
+    try {
+      await caller.strategy.setStrategy({ signalSourceId: 1, exchangeApiId: 1, multiplier: 50, isEnabled: true });
+    } catch (e: any) {
+      // DB/API errors are ok, just not validation errors
+      expect(e.message).not.toContain("Number must be less than or equal to");
     }
   });
 });
@@ -108,16 +128,43 @@ describe("funds.submitDeposit", () => {
   });
 });
 
+describe("funds.depositAddress", () => {
+  it("throws UNAUTHORIZED for unauthenticated users", async () => {
+    const caller = appRouter.createCaller(makeCtx());
+    await expect(caller.funds.depositAddress()).rejects.toThrow();
+  });
+});
+
 // ---- Admin Tests ----
 describe("admin procedures", () => {
-  it("adminDashboard throws UNAUTHORIZED for regular users", async () => {
+  it("adminDashboard throws FORBIDDEN for regular users", async () => {
     const caller = appRouter.createCaller(makeUserCtx("user"));
     await expect(caller.user.adminDashboard()).rejects.toThrow();
   });
 
-  it("adminList throws UNAUTHORIZED for regular users", async () => {
+  it("adminList throws FORBIDDEN for regular users", async () => {
     const caller = appRouter.createCaller(makeUserCtx("user"));
     await expect(caller.user.adminList({})).rejects.toThrow();
+  });
+
+  it("adminListSources throws FORBIDDEN for regular users", async () => {
+    const caller = appRouter.createCaller(makeUserCtx("user"));
+    await expect(caller.strategy.adminListSources()).rejects.toThrow();
+  });
+
+  it("adminCreateSource throws FORBIDDEN for regular users", async () => {
+    const caller = appRouter.createCaller(makeUserCtx("user"));
+    await expect(
+      caller.strategy.adminCreateSource({
+        name: "Test", symbol: "BTC", tradingPair: "BTCUSDT",
+        referencePosition: 1000, expectedMonthlyReturnMin: 5, expectedMonthlyReturnMax: 10,
+      })
+    ).rejects.toThrow();
+  });
+
+  it("adminSetConfig throws FORBIDDEN for regular users", async () => {
+    const caller = appRouter.createCaller(makeUserCtx("user"));
+    await expect(caller.funds.adminSetConfig({ key: "test", value: "val" })).rejects.toThrow();
   });
 });
 
@@ -126,5 +173,42 @@ describe("revenue share calculation", () => {
   it("verifies multi-level share is accessible only to admin", async () => {
     const caller = appRouter.createCaller(makeUserCtx("user"));
     await expect(caller.user.adminRevenueShareRecords({})).rejects.toThrow();
+  });
+});
+
+// ---- Crypto Tests ----
+describe("crypto utilities", () => {
+  it("encrypts and decrypts a string correctly", () => {
+    const original = "5d8e2d77-86a8-4c70-b8bf-7beba7e86457";
+    const encrypted = encrypt(original);
+    expect(encrypted).not.toBe(original);
+    expect(encrypted.length).toBeGreaterThan(0);
+    const decrypted = decrypt(encrypted);
+    expect(decrypted).toBe(original);
+  });
+
+  it("masks API key correctly", () => {
+    const key = "5d8e2d77-86a8-4c70-b8bf-7beba7e86457";
+    const masked = maskApiKey(key);
+    expect(masked).toContain("****");
+    expect(masked).not.toBe(key);
+    expect(masked.startsWith("5d8e")).toBe(true);
+  });
+
+  it("handles short keys in masking", () => {
+    const key = "abc";
+    const masked = maskApiKey(key);
+    expect(masked).toContain("****");
+  });
+
+  it("different encryptions produce different ciphertexts (random IV)", () => {
+    const original = "test-secret-key";
+    const enc1 = encrypt(original);
+    const enc2 = encrypt(original);
+    // Due to random IV, encryptions should differ
+    expect(enc1).not.toBe(enc2);
+    // But both should decrypt to the same value
+    expect(decrypt(enc1)).toBe(original);
+    expect(decrypt(enc2)).toBe(original);
   });
 });

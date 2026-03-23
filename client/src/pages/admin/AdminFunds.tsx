@@ -1,13 +1,13 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import AdminLayout from "@/components/AdminLayout";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { CheckCircle, XCircle, ChevronLeft, ChevronRight } from "lucide-react";
+import { CheckCircle, XCircle, ChevronLeft, ChevronRight, Wallet, Settings, Save } from "lucide-react";
 import { toast } from "sonner";
 
 const STATUS_COLORS: Record<string, string> = {
@@ -27,10 +27,30 @@ export default function AdminFunds() {
   const [reviewItem, setReviewItem] = useState<any>(null);
   const [reviewType, setReviewType] = useState<"deposit" | "withdrawal">("deposit");
   const [rejectReason, setRejectReason] = useState("");
-  const [feeRate, setFeeRate] = useState("");
+  const [txHashInput, setTxHashInput] = useState("");
+
+  // System config state
+  const [walletAddress, setWalletAddress] = useState("");
+  const [withdrawalFeeRate, setWithdrawalFeeRate] = useState("");
+  const [withdrawalMinAmount, setWithdrawalMinAmount] = useState("");
 
   const { data: deposits } = trpc.funds.adminDeposits.useQuery({ page: depPage, limit: 20 });
   const { data: withdrawals } = trpc.funds.adminWithdrawals.useQuery({ page: witPage, limit: 20 });
+  const { data: configs } = trpc.funds.adminGetConfig.useQuery();
+
+  useEffect(() => {
+    if (configs) {
+      const configMap = new Map(configs.map((c: any) => [c.configKey, c.configValue]));
+      setWalletAddress((configMap.get("platform_deposit_address") as string) || "");
+      setWithdrawalFeeRate((configMap.get("withdrawal_fee_rate") as string) || "0.01");
+      setWithdrawalMinAmount((configMap.get("withdrawal_min_amount") as string) || "10");
+    }
+  }, [configs]);
+
+  const setConfigMutation = trpc.funds.adminSetConfig.useMutation({
+    onSuccess: () => { toast.success("配置已保存"); utils.funds.adminGetConfig.invalidate(); },
+    onError: (e: any) => toast.error(e.message),
+  });
 
   const reviewDepMutation = trpc.funds.adminReviewDeposit.useMutation({
     onSuccess: () => { toast.success("审核完成"); utils.funds.adminDeposits.invalidate(); setReviewItem(null); },
@@ -43,14 +63,14 @@ export default function AdminFunds() {
   });
 
   const openReview = (item: any, type: "deposit" | "withdrawal") => {
-    setReviewItem(item); setReviewType(type); setRejectReason(""); setFeeRate("");
+    setReviewItem(item); setReviewType(type); setRejectReason(""); setTxHashInput("");
   };
 
   const handleApprove = () => {
     if (reviewType === "deposit") {
       reviewDepMutation.mutate({ depositId: reviewItem.id, approved: true });
     } else {
-      reviewWitMutation.mutate({ withdrawalId: reviewItem.id, approved: true });
+      reviewWitMutation.mutate({ withdrawalId: reviewItem.id, approved: true, txHash: txHashInput || undefined });
     }
   };
 
@@ -60,6 +80,10 @@ export default function AdminFunds() {
     } else {
       reviewWitMutation.mutate({ withdrawalId: reviewItem.id, approved: false, reviewNote: rejectReason });
     }
+  };
+
+  const saveConfig = (key: string, value: string) => {
+    setConfigMutation.mutate({ key, value });
   };
 
   const isPending = reviewDepMutation.isPending || reviewWitMutation.isPending;
@@ -105,15 +129,88 @@ export default function AdminFunds() {
     <AdminLayout>
       <div className="space-y-6">
         <div>
-          <h1 className="text-2xl font-bold">资金审核</h1>
-          <p className="text-muted-foreground text-sm mt-1">审核用户充值和提现申请</p>
+          <h1 className="text-2xl font-bold">资金管理</h1>
+          <p className="text-muted-foreground text-sm mt-1">审核充提申请、配置收款钱包和手续费</p>
         </div>
 
-        <Tabs defaultValue="deposits">
+        <Tabs defaultValue="settings">
           <TabsList className="bg-secondary">
+            <TabsTrigger value="settings"><Settings className="w-3.5 h-3.5 mr-1" />系统设置</TabsTrigger>
             <TabsTrigger value="deposits">充值审核 {deposits?.items.filter((d: any) => d.status === "pending").length ? `(${deposits.items.filter((d: any) => d.status === "pending").length})` : ""}</TabsTrigger>
             <TabsTrigger value="withdrawals">提现审核 {withdrawals?.items.filter((w: any) => w.status === "pending").length ? `(${withdrawals.items.filter((w: any) => w.status === "pending").length})` : ""}</TabsTrigger>
           </TabsList>
+
+          {/* System Settings Tab */}
+          <TabsContent value="settings" className="mt-4">
+            <div className="grid md:grid-cols-2 gap-4">
+              {/* Wallet Address */}
+              <Card className="bg-card border-border md:col-span-2">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base flex items-center gap-2"><Wallet className="w-4 h-4 text-primary" />平台收款钱包地址</CardTitle>
+                  <p className="text-xs text-muted-foreground">用户充值时将看到此地址，请确保是您的 BSC (BEP-20) USDT 收款地址</p>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex gap-3">
+                    <Input
+                      placeholder="输入 BSC 链 USDT 收款钱包地址 (0x...)"
+                      value={walletAddress}
+                      onChange={(e) => setWalletAddress(e.target.value)}
+                      className="bg-input border-border font-mono text-sm flex-1"
+                    />
+                    <Button onClick={() => saveConfig("platform_deposit_address", walletAddress)} disabled={setConfigMutation.isPending}>
+                      <Save className="w-4 h-4 mr-1" />保存
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Withdrawal Fee Rate */}
+              <Card className="bg-card border-border">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base">提现手续费率</CardTitle>
+                  <p className="text-xs text-muted-foreground">用户提现时收取的手续费比例（0.01 = 1%）</p>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex gap-3">
+                    <Input
+                      type="number"
+                      step="0.001"
+                      placeholder="如：0.01"
+                      value={withdrawalFeeRate}
+                      onChange={(e) => setWithdrawalFeeRate(e.target.value)}
+                      className="bg-input border-border text-sm flex-1"
+                    />
+                    <Button onClick={() => saveConfig("withdrawal_fee_rate", withdrawalFeeRate)} disabled={setConfigMutation.isPending}>
+                      <Save className="w-4 h-4 mr-1" />保存
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-2">当前费率: {(parseFloat(withdrawalFeeRate || "0") * 100).toFixed(1)}%</p>
+                </CardContent>
+              </Card>
+
+              {/* Min Withdrawal */}
+              <Card className="bg-card border-border">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base">最低提现金额</CardTitle>
+                  <p className="text-xs text-muted-foreground">用户单次提现的最低金额限制 (USDT)</p>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex gap-3">
+                    <Input
+                      type="number"
+                      placeholder="如：10"
+                      value={withdrawalMinAmount}
+                      onChange={(e) => setWithdrawalMinAmount(e.target.value)}
+                      className="bg-input border-border text-sm flex-1"
+                    />
+                    <Button onClick={() => saveConfig("withdrawal_min_amount", withdrawalMinAmount)} disabled={setConfigMutation.isPending}>
+                      <Save className="w-4 h-4 mr-1" />保存
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </TabsContent>
 
           <TabsContent value="deposits" className="mt-4">
             <Card className="bg-card border-border">
@@ -146,17 +243,22 @@ export default function AdminFunds() {
               <div className="p-4 rounded-lg bg-secondary/50 space-y-2 text-sm">
                 <div className="flex justify-between"><span className="text-muted-foreground">用户ID</span><span>#{reviewItem?.userId}</span></div>
                 <div className="flex justify-between"><span className="text-muted-foreground">金额</span><span className="font-semibold">{parseFloat(reviewItem?.amount || "0").toFixed(4)} USDT</span></div>
-                {reviewItem?.txHash && <div className="flex justify-between"><span className="text-muted-foreground">TxHash</span><span className="font-mono text-xs">{reviewItem.txHash}</span></div>}
-                {reviewItem?.toAddress && <div className="flex justify-between"><span className="text-muted-foreground">收款地址</span><span className="font-mono text-xs">{reviewItem.toAddress}</span></div>}
+                {reviewType === "withdrawal" && reviewItem?.fee && (
+                  <div className="flex justify-between"><span className="text-muted-foreground">手续费</span><span>{parseFloat(reviewItem.fee).toFixed(4)} USDT</span></div>
+                )}
+                {reviewItem?.txHash && <div className="flex justify-between"><span className="text-muted-foreground">TxHash</span><span className="font-mono text-xs break-all">{reviewItem.txHash}</span></div>}
+                {reviewItem?.fromAddress && <div className="flex justify-between"><span className="text-muted-foreground">来源地址</span><span className="font-mono text-xs break-all">{reviewItem.fromAddress}</span></div>}
+                {reviewItem?.toAddress && <div className="flex justify-between"><span className="text-muted-foreground">收款地址</span><span className="font-mono text-xs break-all">{reviewItem.toAddress}</span></div>}
+                {reviewItem?.proofNote && <div className="flex justify-between"><span className="text-muted-foreground">备注</span><span>{reviewItem.proofNote}</span></div>}
               </div>
               {reviewType === "withdrawal" && (
                 <div className="space-y-2">
-                  <Label>手续费率 (%) 留空则使用系统默认</Label>
-                  <Input type="number" placeholder="如：1.5" value={feeRate} onChange={(e) => setFeeRate(e.target.value)} className="bg-input border-border" />
+                  <Label className="text-sm">转账 TxHash（通过时填写）</Label>
+                  <Input placeholder="链上转账哈希" value={txHashInput} onChange={(e) => setTxHashInput(e.target.value)} className="bg-input border-border font-mono text-sm" />
                 </div>
               )}
               <div className="space-y-2">
-                <Label>拒绝原因（拒绝时必填）</Label>
+                <Label className="text-sm">拒绝原因（拒绝时必填）</Label>
                 <Input placeholder="请输入拒绝原因" value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} className="bg-input border-border" />
               </div>
               <div className="flex gap-3">

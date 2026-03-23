@@ -33,7 +33,7 @@ export default function AdminOrders() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold">订单监控</h1>
-            <p className="text-muted-foreground text-sm mt-1">监控所有用户的跟单订单状态</p>
+            <p className="text-muted-foreground text-sm mt-1">监控所有用户的策略订单状态</p>
           </div>
           <div className="flex items-center gap-2 text-sm">
             <span className="text-muted-foreground">仅看异常</span>

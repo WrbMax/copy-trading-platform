@@ -2,6 +2,7 @@ import { useState } from "react";
 import UserLayout from "@/components/UserLayout";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -12,6 +13,8 @@ import { Zap, TrendingUp, Settings, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 import { Link } from "wouter";
 
+const QUICK_MULTIPLIERS = [1, 2, 5, 10, 20, 50, 100];
+
 export default function Strategy() {
   const utils = trpc.useUtils();
   const { data: sources } = trpc.strategy.list.useQuery();
@@ -20,6 +23,7 @@ export default function Strategy() {
   const [selectedSource, setSelectedSource] = useState<number | null>(null);
   const [selectedApi, setSelectedApi] = useState<string>("");
   const [multiplier, setMultiplier] = useState(1);
+  const [multiplierInput, setMultiplierInput] = useState("1");
   const [dialogOpen, setDialogOpen] = useState(false);
 
   const setStrategyMutation = trpc.strategy.setStrategy.useMutation({
@@ -37,12 +41,29 @@ export default function Strategy() {
     const existing = myStrategies?.find((s) => s.signalSourceId === sourceId);
     setSelectedSource(sourceId);
     setSelectedApi(existing?.exchangeApiId?.toString() || (activeApis[0]?.id?.toString() ?? ""));
-    setMultiplier(parseFloat(existing?.multiplier || "1"));
+    const m = parseFloat(existing?.multiplier || "1");
+    setMultiplier(m);
+    setMultiplierInput(m.toString());
     setDialogOpen(true);
+  };
+
+  const handleMultiplierChange = (val: number) => {
+    const clamped = Math.max(1, Math.min(100, val));
+    setMultiplier(clamped);
+    setMultiplierInput(clamped.toString());
+  };
+
+  const handleMultiplierInput = (val: string) => {
+    setMultiplierInput(val);
+    const num = parseFloat(val);
+    if (!isNaN(num) && num >= 1 && num <= 100) {
+      setMultiplier(num);
+    }
   };
 
   const handleSave = (isEnabled: boolean) => {
     if (!selectedSource || !selectedApi) { toast.error("请选择交易所API"); return; }
+    if (multiplier < 1 || multiplier > 100) { toast.error("倍数范围为 1-100"); return; }
     setStrategyMutation.mutate({ signalSourceId: selectedSource, exchangeApiId: parseInt(selectedApi), multiplier, isEnabled });
   };
 
@@ -50,8 +71,8 @@ export default function Strategy() {
     <UserLayout>
       <div className="space-y-6">
         <div>
-          <h1 className="text-2xl font-bold">策略跟单</h1>
-          <p className="text-muted-foreground text-sm mt-1">选择策略并设置跟单倍数，系统将自动执行交易</p>
+          <h1 className="text-2xl font-bold">策略中心</h1>
+          <p className="text-muted-foreground text-sm mt-1">选择策略并设置开仓倍数，系统将自动执行交易</p>
         </div>
 
         {activeApis.length === 0 && (
@@ -143,7 +164,7 @@ export default function Strategy() {
                     </div>
                     <Button className="w-full" size="sm" onClick={() => openDialog(source.id)} disabled={activeApis.length === 0}>
                       <Zap className="w-4 h-4 mr-1" />
-                      {myStrategy ? "修改设置" : "开启跟单"}
+                      {myStrategy ? "修改设置" : "开启策略"}
                     </Button>
                   </CardContent>
                 </Card>
@@ -156,7 +177,7 @@ export default function Strategy() {
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogContent className="bg-card border-border">
             <DialogHeader>
-              <DialogTitle>策略跟单设置</DialogTitle>
+              <DialogTitle>策略设置</DialogTitle>
             </DialogHeader>
             <div className="space-y-5 mt-2">
               <div className="space-y-2">
@@ -172,19 +193,58 @@ export default function Strategy() {
                   </SelectContent>
                 </Select>
               </div>
+
+              {/* Multiplier Section */}
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <label className="text-sm font-medium">跟单倍数</label>
-                  <span className="text-lg font-bold text-primary">{multiplier}x</span>
+                  <label className="text-sm font-medium">开仓倍数</label>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type="number"
+                      min={1}
+                      max={100}
+                      value={multiplierInput}
+                      onChange={(e) => handleMultiplierInput(e.target.value)}
+                      onBlur={() => {
+                        const num = parseFloat(multiplierInput);
+                        if (isNaN(num) || num < 1) handleMultiplierChange(1);
+                        else if (num > 100) handleMultiplierChange(100);
+                        else handleMultiplierChange(num);
+                      }}
+                      className="w-20 bg-input border-border text-center text-sm font-bold"
+                    />
+                    <span className="text-sm font-bold text-primary">x</span>
+                  </div>
                 </div>
-                <Slider min={0.1} max={10} step={0.1} value={[multiplier]} onValueChange={([v]) => setMultiplier(v)} className="w-full" />
+
+                {/* Slider */}
+                <Slider min={1} max={100} step={1} value={[multiplier]} onValueChange={([v]) => handleMultiplierChange(v)} className="w-full" />
                 <div className="flex justify-between text-xs text-muted-foreground">
-                  <span>0.1x（最小）</span><span>10x（最大）</span>
+                  <span>1x（最小）</span><span>100x（最大）</span>
+                </div>
+
+                {/* Quick Select Buttons */}
+                <div className="flex flex-wrap gap-2">
+                  {QUICK_MULTIPLIERS.map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                        multiplier === m
+                          ? "bg-primary text-primary-foreground"
+                          : "bg-secondary/70 text-muted-foreground hover:bg-secondary hover:text-foreground"
+                      }`}
+                      onClick={() => handleMultiplierChange(m)}
+                    >
+                      {m}x
+                    </button>
+                  ))}
                 </div>
               </div>
+
               <div className="p-3 rounded-lg bg-secondary/50 text-xs text-muted-foreground">
                 <TrendingUp className="w-4 h-4 inline mr-1 text-primary" />
-                倍数越大，实际交易量越大，盈亏也成比例放大。请根据风险承受能力设置。
+                倍数越大，实际开仓数量越大，盈亏也成比例放大。请根据风险承受能力设置。
               </div>
               <div className="flex gap-3">
                 <Button variant="outline" className="flex-1 bg-transparent" onClick={() => handleSave(false)} disabled={setStrategyMutation.isPending}>

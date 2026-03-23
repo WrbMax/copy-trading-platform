@@ -16,7 +16,7 @@ const navItems = [
   { href: "/admin/users", icon: Users, label: "用户管理" },
   { href: "/admin/signals", icon: Zap, label: "信号源管理" },
   { href: "/admin/orders", icon: ListOrdered, label: "订单监控" },
-  { href: "/admin/funds", icon: CreditCard, label: "资金审核" },
+  { href: "/admin/funds", icon: CreditCard, label: "资金管理" },
   { href: "/admin/points", icon: Coins, label: "积分管理" },
   { href: "/admin/revenue-share", icon: TrendingUp, label: "收益分成" },
 ];

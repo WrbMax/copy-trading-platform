@@ -136,7 +136,7 @@ export default function Dashboard() {
         {/* Quick Actions */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {[
-            { href: "/strategy", icon: Zap, label: "策略跟单", desc: "开启/关闭策略" },
+            { href: "/strategy", icon: Zap, label: "策略中心", desc: "开启/关闭策略" },
             { href: "/orders", icon: BarChart3, label: "订单记录", desc: "查看历史订单" },
             { href: "/earnings", icon: TrendingUp, label: "我的收益", desc: "收益分成明细" },
             { href: "/funds", icon: CreditCard, label: "充值提现", desc: "资金管理" },

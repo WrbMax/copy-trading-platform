@@ -68,7 +68,7 @@ export default function AdminDashboard() {
               {[
                 { label: "数据库连接", status: "正常", color: "text-profit" },
                 { label: "信号接收", status: "就绪", color: "text-profit" },
-                { label: "跟单执行", status: "运行中", color: "text-profit" },
+                { label: "策略执行", status: "运行中", color: "text-profit" },
                 { label: "收益分成", status: "自动结算", color: "text-profit" },
               ].map((s) => (
                 <div key={s.label} className="flex items-center justify-between">

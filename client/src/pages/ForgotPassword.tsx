@@ -42,8 +42,8 @@ export default function ForgotPassword() {
             <LineChart className="w-6 h-6 text-primary-foreground" />
           </div>
           <div>
-            <h1 className="text-xl font-bold">策略跟单平台</h1>
-            <p className="text-xs text-muted-foreground">BSC链USDT · 智能跟单</p>
+            <h1 className="text-xl font-bold">策略平台</h1>
+            <p className="text-xs text-muted-foreground">BSC链USDT · 智能策略</p>
           </div>
         </div>
         <Card className="bg-card border-border">

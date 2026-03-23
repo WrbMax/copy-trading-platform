@@ -32,7 +32,7 @@ export default function Orders() {
       <div className="space-y-6">
         <div>
           <h1 className="text-2xl font-bold">订单记录</h1>
-          <p className="text-muted-foreground text-sm mt-1">查看所有跟单订单的开平仓记录和盈亏情况</p>
+          <p className="text-muted-foreground text-sm mt-1">查看所有策略订单的开平仓记录和盈亏情况</p>
         </div>
 
         {/* Stats */}

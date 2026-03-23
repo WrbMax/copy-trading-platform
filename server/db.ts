@@ -269,11 +269,11 @@ export async function getEnabledStrategiesForSignal(signalSourceId: number) {
 }
 
 // ─── Signal Logs ──────────────────────────────────────────────────────────────
-export async function createSignalLog(data: typeof signalLogs.$inferInsert) {
+export async function createSignalLog(data: typeof signalLogs.$inferInsert): Promise<number> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const result = await db.insert(signalLogs).values(data);
-  return result[0];
+  return result[0].insertId;
 }
 
 export async function updateSignalLog(id: number, data: Partial<typeof signalLogs.$inferInsert>) {

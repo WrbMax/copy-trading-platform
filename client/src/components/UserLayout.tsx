@@ -32,7 +32,7 @@ import {
 
 const navItems = [
   { href: "/", icon: LayoutDashboard, label: "首页" },
-  { href: "/strategy", icon: Zap, label: "策略跟单" },
+  { href: "/strategy", icon: Zap, label: "策略中心" },
   { href: "/orders", icon: ListOrdered, label: "订单记录" },
   { href: "/earnings", icon: TrendingUp, label: "我的收益" },
   { href: "/team", icon: Users, label: "团队收益" },
@@ -73,7 +73,7 @@ export default function UserLayout({ children }: { children: React.ReactNode }) 
             <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
               <LineChart className="w-5 h-5 text-primary-foreground" />
             </div>
-            <span className="font-bold text-lg text-sidebar-foreground">策略跟单</span>
+            <span className="font-bold text-lg text-sidebar-foreground">策略平台</span>
           </div>
           <button className="ml-auto lg:hidden text-muted-foreground" onClick={() => setMobileOpen(false)}>
             <X className="w-5 h-5" />

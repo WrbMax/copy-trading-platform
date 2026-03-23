@@ -64,7 +64,7 @@ export default function ExchangeApi() {
               <div className="space-y-4 mt-2">
                 <div className="p-3 rounded-lg bg-primary/10 border border-primary/20 flex items-start gap-2 text-sm text-primary">
                   <Shield className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                  <span>API密钥使用AES-256-GCM加密存储，仅用于执行跟单交易，建议开启仅交易权限，禁止提现权限。</span>
+                  <span>API密钥使用AES-256-GCM加密存储，仅用于执行策略交易，建议开启仅交易权限，禁止提现权限。</span>
                 </div>
                 <div className="space-y-2">
                   <Label>交易所</Label>
@@ -109,7 +109,7 @@ export default function ExchangeApi() {
             <CardContent className="py-12 text-center">
               <Shield className="w-12 h-12 mx-auto mb-4 text-muted-foreground opacity-40" />
               <p className="text-muted-foreground">暂无绑定的交易所API</p>
-              <p className="text-sm text-muted-foreground mt-1">绑定API后即可开启策略跟单</p>
+              <p className="text-sm text-muted-foreground mt-1">绑定API后即可开启策略交易</p>
             </CardContent>
           </Card>
         ) : (
@@ -159,7 +159,7 @@ export default function ExchangeApi() {
             <h3 className="font-medium text-foreground mb-3 flex items-center gap-2"><Shield className="w-4 h-4 text-primary" />安全说明</h3>
             <ul className="space-y-2 text-sm text-muted-foreground">
               <li>• API密钥使用AES-256-GCM算法加密存储，密钥不会明文展示</li>
-              <li>• 建议为跟单专用创建子账户API，仅开启合约交易权限</li>
+              <li>• 建议为策略专用创建子账户API，仅开启合约交易权限</li>
               <li>• 严禁开启提现权限，平台不会主动发起提现操作</li>
               <li>• 如发现异常，请立即在交易所删除对应API密钥</li>
             </ul>

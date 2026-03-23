@@ -23,6 +23,7 @@ import {
   createCopyOrder,
 } from "../db";
 import { processRevenueShare } from "../revenue-share";
+import { encrypt, decrypt, maskApiKey } from "../crypto";
 import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
 import { adminProcedure } from "../_core/trpc";
 
@@ -99,7 +100,14 @@ export const strategyRouter = router({
 
   // Admin: manage signal sources
   adminListSources: adminProcedure.query(async () => {
-    return listSignalSources(false);
+    const sources = await listSignalSources(false);
+    return sources.map((s) => ({
+      ...s,
+      apiKeyMasked: s.apiKeyEncrypted ? maskApiKey(decrypt(s.apiKeyEncrypted)) : null,
+      apiSecretMasked: s.apiSecretEncrypted ? "****" : null,
+      apiKeyEncrypted: undefined,
+      apiSecretEncrypted: undefined,
+    }));
   }),
 
   adminCreateSource: adminProcedure
@@ -111,6 +119,9 @@ export const strategyRouter = router({
       expectedMonthlyReturnMin: z.number().min(0),
       expectedMonthlyReturnMax: z.number().min(0),
       description: z.string().optional(),
+      apiKey: z.string().optional(),
+      apiSecret: z.string().optional(),
+      webhookSecret: z.string().optional(),
     }))
     .mutation(async ({ input }) => {
       await createSignalSource({
@@ -121,6 +132,9 @@ export const strategyRouter = router({
         expectedMonthlyReturnMin: input.expectedMonthlyReturnMin.toFixed(2),
         expectedMonthlyReturnMax: input.expectedMonthlyReturnMax.toFixed(2),
         description: input.description,
+        apiKeyEncrypted: input.apiKey ? encrypt(input.apiKey) : undefined,
+        apiSecretEncrypted: input.apiSecret ? encrypt(input.apiSecret) : undefined,
+        webhookSecret: input.webhookSecret,
         isActive: true,
       });
       return { success: true };
@@ -137,9 +151,12 @@ export const strategyRouter = router({
       expectedMonthlyReturnMax: z.number().optional(),
       description: z.string().optional(),
       isActive: z.boolean().optional(),
+      apiKey: z.string().optional(),
+      apiSecret: z.string().optional(),
+      webhookSecret: z.string().optional(),
     }))
     .mutation(async ({ input }) => {
-      const { id, ...rest } = input;
+      const { id, apiKey, apiSecret, webhookSecret: ws, ...rest } = input;
       const updateData: Record<string, unknown> = {};
       if (rest.name !== undefined) updateData.name = rest.name;
       if (rest.symbol !== undefined) updateData.symbol = rest.symbol;
@@ -149,6 +166,9 @@ export const strategyRouter = router({
       if (rest.expectedMonthlyReturnMax !== undefined) updateData.expectedMonthlyReturnMax = rest.expectedMonthlyReturnMax.toFixed(2);
       if (rest.description !== undefined) updateData.description = rest.description;
       if (rest.isActive !== undefined) updateData.isActive = rest.isActive;
+      if (apiKey !== undefined) updateData.apiKeyEncrypted = apiKey ? encrypt(apiKey) : null;
+      if (apiSecret !== undefined) updateData.apiSecretEncrypted = apiSecret ? encrypt(apiSecret) : null;
+      if (ws !== undefined) updateData.webhookSecret = ws || null;
       await updateSignalSource(id, updateData as any);
       return { success: true };
     }),
@@ -192,7 +212,7 @@ export const strategyRouter = router({
       }
 
       // Create signal log
-      const logResult = await createSignalLog({
+      const logId = await createSignalLog({
         signalSourceId: input.signalSourceId,
         action: input.action,
         symbol: input.symbol,
@@ -210,13 +230,14 @@ export const strategyRouter = router({
       let successCount = 0;
       for (const us of userStrategies) {
         try {
+          const api = await getExchangeApiById(us.exchangeApiId);
           const actualQty = parseFloat(input.quantity.toFixed(8)) * parseFloat(us.multiplier);
           await createCopyOrder({
             userId: us.userId,
-            signalLogId: 0, // will be updated
+            signalLogId: logId,
             signalSourceId: input.signalSourceId,
             exchangeApiId: us.exchangeApiId,
-            exchange: "binance", // default, would be from API record
+            exchange: api?.exchange || "binance",
             symbol: input.symbol,
             action: input.action,
             multiplier: us.multiplier,
@@ -232,7 +253,7 @@ export const strategyRouter = router({
         }
       }
 
-      await updateSignalLog(0, { status: "completed" });
+      if (logId) await updateSignalLog(logId, { status: "completed" });
       return { success: true, processedUsers: successCount };
     }),
 
