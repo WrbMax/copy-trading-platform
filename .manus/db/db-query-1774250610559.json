@@ -1,0 +1,52 @@
+{
+  "query": "SHOW TABLES;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 2yRRhmQmjmz9LMP.root --database 3xjoeN6gTpdmQoJAnkq7pe --execute SHOW TABLES;",
+  "rows": [
+    {
+      "Tables_in_3xjoeN6gTpdmQoJAnkq7pe": "__drizzle_migrations"
+    },
+    {
+      "Tables_in_3xjoeN6gTpdmQoJAnkq7pe": "copy_orders"
+    },
+    {
+      "Tables_in_3xjoeN6gTpdmQoJAnkq7pe": "deposits"
+    },
+    {
+      "Tables_in_3xjoeN6gTpdmQoJAnkq7pe": "email_verification_codes"
+    },
+    {
+      "Tables_in_3xjoeN6gTpdmQoJAnkq7pe": "exchange_apis"
+    },
+    {
+      "Tables_in_3xjoeN6gTpdmQoJAnkq7pe": "fund_transactions"
+    },
+    {
+      "Tables_in_3xjoeN6gTpdmQoJAnkq7pe": "points_transactions"
+    },
+    {
+      "Tables_in_3xjoeN6gTpdmQoJAnkq7pe": "revenue_share_records"
+    },
+    {
+      "Tables_in_3xjoeN6gTpdmQoJAnkq7pe": "signal_logs"
+    },
+    {
+      "Tables_in_3xjoeN6gTpdmQoJAnkq7pe": "signal_sources"
+    },
+    {
+      "Tables_in_3xjoeN6gTpdmQoJAnkq7pe": "system_config"
+    },
+    {
+      "Tables_in_3xjoeN6gTpdmQoJAnkq7pe": "user_strategies"
+    },
+    {
+      "Tables_in_3xjoeN6gTpdmQoJAnkq7pe": "users"
+    },
+    {
+      "Tables_in_3xjoeN6gTpdmQoJAnkq7pe": "withdrawals"
+    }
+  ],
+  "messages": [],
+  "stdout": "Tables_in_3xjoeN6gTpdmQoJAnkq7pe\n__drizzle_migrations\ncopy_orders\ndeposits\nemail_verification_codes\nexchange_apis\nfund_transactions\npoints_transactions\nrevenue_share_records\nsignal_logs\nsignal_sources\nsystem_config\nuser_strategies\nusers\nwithdrawals\n",
+  "stderr": "",
+  "execution_time_ms": 1602
+}

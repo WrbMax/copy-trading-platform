@@ -1,0 +1,8 @@
+{
+  "query": "CREATE TABLE `deposit_addresses` (`id` int AUTO_INCREMENT NOT NULL, `userId` int NOT NULL, `address` varchar(128) NOT NULL, `derivationIndex` int NOT NULL, `network` varchar(32) NOT NULL DEFAULT 'BSC', `totalDeposited` decimal(20,8) NOT NULL DEFAULT '0', `lastCheckedAt` timestamp, `isActive` boolean NOT NULL DEFAULT true, `createdAt` timestamp NOT NULL DEFAULT (now()), `updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP, CONSTRAINT `deposit_addresses_id` PRIMARY KEY(`id`), CONSTRAINT `deposit_addresses_userId_unique` UNIQUE(`userId`), CONSTRAINT `deposit_addresses_address_unique` UNIQUE(`address`), CONSTRAINT `deposit_addresses_derivationIndex_unique` UNIQUE(`derivationIndex`));",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 2yRRhmQmjmz9LMP.root --database 3xjoeN6gTpdmQoJAnkq7pe --execute CREATE TABLE `deposit_addresses` (`id` int AUTO_INCREMENT NOT NULL, `userId` int NOT NULL, `address` varchar(128) NOT NULL, `derivationIndex` int NOT NULL, `network` varchar(32) NOT NULL DEFAULT 'BSC', `totalDeposited` decimal(20,8) NOT NULL DEFAULT '0', `lastCheckedAt` timestamp, `isActive` boolean NOT NULL DEFAULT true, `createdAt` timestamp NOT NULL DEFAULT (now()), `updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP, CONSTRAINT `deposit_addresses_id` PRIMARY KEY(`id`), CONSTRAINT `deposit_addresses_userId_unique` UNIQUE(`userId`), CONSTRAINT `deposit_addresses_address_unique` UNIQUE(`address`), CONSTRAINT `deposit_addresses_derivationIndex_unique` UNIQUE(`derivationIndex`));",
+  "returncode": 1,
+  "logs": [
+    "ERROR 9001 (HY000) at line 1: PD server timeout:"
+  ]
+}

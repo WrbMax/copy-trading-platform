@@ -1,0 +1,8 @@
+{
+  "query": "CREATE TABLE deposit_addresses (id int PRIMARY KEY AUTO_INCREMENT, userId int NOT NULL, address varchar(128) NOT NULL, derivationIndex int NOT NULL);",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 2yRRhmQmjmz9LMP.root --database 3xjoeN6gTpdmQoJAnkq7pe --execute CREATE TABLE deposit_addresses (id int PRIMARY KEY AUTO_INCREMENT, userId int NOT NULL, address varchar(128) NOT NULL, derivationIndex int NOT NULL);",
+  "returncode": 1,
+  "logs": [
+    "ERROR 9001 (HY000) at line 1: PD server timeout:"
+  ]
+}

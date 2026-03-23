@@ -43,6 +43,15 @@ describe("auth.me", () => {
     expect(result).not.toBeNull();
     expect(result?.email).toBe("test@example.com");
   });
+
+  it("strips sensitive fields from auth.me response", async () => {
+    const ctx = makeUserCtx();
+    (ctx.user as any).passwordHash = "secret-hash-value";
+    const caller = appRouter.createCaller(ctx);
+    const result = await caller.auth.me();
+    expect(result).not.toBeNull();
+    expect((result as any).passwordHash).toBeUndefined();
+  });
 });
 
 describe("auth.logout", () => {
@@ -86,19 +95,23 @@ describe("strategy.myStrategies", () => {
 describe("strategy.setStrategy", () => {
   it("validates multiplier range 1-100", async () => {
     const caller = appRouter.createCaller(makeUserCtx());
-    // Multiplier > 100 should fail validation
     await expect(
       caller.strategy.setStrategy({ signalSourceId: 1, exchangeApiId: 1, multiplier: 200, isEnabled: true })
     ).rejects.toThrow();
   });
 
+  it("rejects multiplier below 1", async () => {
+    const caller = appRouter.createCaller(makeUserCtx());
+    await expect(
+      caller.strategy.setStrategy({ signalSourceId: 1, exchangeApiId: 1, multiplier: 0, isEnabled: true })
+    ).rejects.toThrow();
+  });
+
   it("accepts multiplier within valid range", async () => {
     const caller = appRouter.createCaller(makeUserCtx());
-    // This will fail at DB level but should pass validation
     try {
       await caller.strategy.setStrategy({ signalSourceId: 1, exchangeApiId: 1, multiplier: 50, isEnabled: true });
     } catch (e: any) {
-      // DB/API errors are ok, just not validation errors
       expect(e.message).not.toContain("Number must be less than or equal to");
     }
   });
@@ -133,6 +146,22 @@ describe("funds.depositAddress", () => {
     const caller = appRouter.createCaller(makeCtx());
     await expect(caller.funds.depositAddress()).rejects.toThrow();
   });
+
+  it("returns address info for authenticated user", async () => {
+    const caller = appRouter.createCaller(makeUserCtx());
+    const result = await caller.funds.depositAddress();
+    expect(result).toHaveProperty("network", "BSC (BEP-20)");
+    expect(result).toHaveProperty("token", "USDT");
+    // Address may be null if wallet not initialized
+    expect(result).toHaveProperty("message");
+  });
+});
+
+describe("funds.myBalance", () => {
+  it("throws UNAUTHORIZED for unauthenticated users", async () => {
+    const caller = appRouter.createCaller(makeCtx());
+    await expect(caller.funds.myBalance()).rejects.toThrow();
+  });
 });
 
 // ---- Admin Tests ----
@@ -165,6 +194,47 @@ describe("admin procedures", () => {
   it("adminSetConfig throws FORBIDDEN for regular users", async () => {
     const caller = appRouter.createCaller(makeUserCtx("user"));
     await expect(caller.funds.adminSetConfig({ key: "test", value: "val" })).rejects.toThrow();
+  });
+});
+
+// ---- Admin BSC Wallet Tests ----
+describe("admin BSC wallet management", () => {
+  it("adminWalletStatus throws FORBIDDEN for regular users", async () => {
+    const caller = appRouter.createCaller(makeUserCtx("user"));
+    await expect(caller.funds.adminWalletStatus()).rejects.toThrow();
+  });
+
+  it("adminInitWallet throws FORBIDDEN for regular users", async () => {
+    const caller = appRouter.createCaller(makeUserCtx("user"));
+    await expect(caller.funds.adminInitWallet()).rejects.toThrow();
+  });
+
+  it("adminImportWallet throws FORBIDDEN for regular users", async () => {
+    const caller = appRouter.createCaller(makeUserCtx("user"));
+    await expect(caller.funds.adminImportWallet({ mnemonic: "test words" })).rejects.toThrow();
+  });
+
+  it("adminScanDeposits throws FORBIDDEN for regular users", async () => {
+    const caller = appRouter.createCaller(makeUserCtx("user"));
+    await expect(caller.funds.adminScanDeposits()).rejects.toThrow();
+  });
+
+  it("adminCollectDeposits throws FORBIDDEN for regular users", async () => {
+    const caller = appRouter.createCaller(makeUserCtx("user"));
+    await expect(caller.funds.adminCollectDeposits()).rejects.toThrow();
+  });
+
+  it("adminSetBscscanKey throws FORBIDDEN for regular users", async () => {
+    const caller = appRouter.createCaller(makeUserCtx("user"));
+    await expect(caller.funds.adminSetBscscanKey({ apiKey: "test-key" })).rejects.toThrow();
+  });
+
+  it("adminWalletStatus accessible to admin", async () => {
+    const caller = appRouter.createCaller(makeUserCtx("admin"));
+    const status = await caller.funds.adminWalletStatus();
+    expect(status).toHaveProperty("initialized");
+    expect(status).toHaveProperty("mainAddress");
+    expect(status).toHaveProperty("nextIndex");
   });
 });
 
@@ -205,9 +275,7 @@ describe("crypto utilities", () => {
     const original = "test-secret-key";
     const enc1 = encrypt(original);
     const enc2 = encrypt(original);
-    // Due to random IV, encryptions should differ
     expect(enc1).not.toBe(enc2);
-    // But both should decrypt to the same value
     expect(decrypt(enc1)).toBe(original);
     expect(decrypt(enc2)).toBe(original);
   });

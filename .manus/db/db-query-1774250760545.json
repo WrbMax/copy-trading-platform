@@ -1,0 +1,13 @@
+{
+  "query": "SHOW TABLES LIKE 'deposit_%';",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 2yRRhmQmjmz9LMP.root --database 3xjoeN6gTpdmQoJAnkq7pe --execute SHOW TABLES LIKE 'deposit_%';",
+  "rows": [
+    {
+      "Tables_in_3xjoeN6gTpdmQoJAnkq7pe (deposit_%)": "deposits"
+    }
+  ],
+  "messages": [],
+  "stdout": "Tables_in_3xjoeN6gTpdmQoJAnkq7pe (deposit_%)\ndeposits\n",
+  "stderr": "",
+  "execution_time_ms": 1531
+}

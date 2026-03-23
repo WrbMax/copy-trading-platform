@@ -22,7 +22,12 @@ import { SignJWT } from "jose";
 import { ENV } from "../_core/env";
 
 export const authRouter = router({
-  me: publicProcedure.query((opts) => opts.ctx.user),
+  me: publicProcedure.query((opts) => {
+    if (!opts.ctx.user) return null;
+    // Strip sensitive fields
+    const { passwordHash, ...safeUser } = opts.ctx.user;
+    return safeUser;
+  }),
 
   logout: publicProcedure.mutation(({ ctx }) => {
     const cookieOptions = getSessionCookieOptions(ctx.req);

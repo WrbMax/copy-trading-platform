@@ -238,3 +238,4 @@ export const systemConfig = mysqlTable("system_config", {
   description: text("description"),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
+

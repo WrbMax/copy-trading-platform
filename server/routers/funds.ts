@@ -17,6 +17,16 @@ import {
 } from "../db";
 import { protectedProcedure, router } from "../_core/trpc";
 import { adminProcedure } from "../_core/trpc";
+import {
+  getOrCreateDepositAddress,
+  getWalletStatus,
+  initHDWallet,
+  importHDWallet,
+  scanDeposits,
+  collectDeposits,
+  getUSDTBalance,
+  getBNBBalance,
+} from "../bsc-wallet";
 
 export const fundsRouter = router({
   myBalance: protectedProcedure.query(async ({ ctx }) => {
@@ -24,11 +34,40 @@ export const fundsRouter = router({
     return { balance: user?.balance ?? "0" };
   }),
 
-  depositAddress: protectedProcedure.query(async () => {
-    const addr = await getSystemConfig("platform_deposit_address");
-    return { address: addr ?? "请联系管理员获取充值地址", network: "BSC (BEP-20)" };
+  // Each user gets their own unique deposit address
+  depositAddress: protectedProcedure.query(async ({ ctx }) => {
+    try {
+      // Check if HD wallet is initialized
+      const walletStatus = await getWalletStatus();
+      if (!walletStatus.initialized) {
+        return {
+          address: null,
+          network: "BSC (BEP-20)",
+          token: "USDT",
+          message: "充值系统正在初始化中，请稍后再试",
+        };
+      }
+
+      // Get or create user's unique deposit address
+      const addrData = await getOrCreateDepositAddress(ctx.user.id);
+      return {
+        address: addrData.address,
+        network: "BSC (BEP-20)",
+        token: "USDT",
+        message: "请向此地址转入 USDT (BEP-20)，系统将自动检测到账",
+      };
+    } catch (error: any) {
+      console.error("[Funds] Failed to get deposit address:", error);
+      return {
+        address: null,
+        network: "BSC (BEP-20)",
+        token: "USDT",
+        message: "获取充值地址失败，请联系管理员",
+      };
+    }
   }),
 
+  // User can still manually submit deposit proof (for cases where auto-detection fails)
   submitDeposit: protectedProcedure
     .input(z.object({
       amount: z.number().positive(),
@@ -37,14 +76,18 @@ export const fundsRouter = router({
       proofNote: z.string().optional(),
     }))
     .mutation(async ({ input, ctx }) => {
-      const addr = await getSystemConfig("platform_deposit_address");
+      let toAddress = "";
+      try {
+        const addrData = await getOrCreateDepositAddress(ctx.user.id);
+        toAddress = addrData.address;
+      } catch {}
       await createDeposit({
         userId: ctx.user.id,
         amount: input.amount.toFixed(8),
         txHash: input.txHash,
         fromAddress: input.fromAddress,
-        toAddress: addr ?? "",
-        proofNote: input.proofNote,
+        toAddress,
+        proofNote: input.proofNote || "用户手动提交",
       });
       return { success: true };
     }),
@@ -67,7 +110,6 @@ export const fundsRouter = router({
       const balance = parseFloat(user.balance || "0");
       if (balance < input.amount) throw new TRPCError({ code: "BAD_REQUEST", message: "余额不足" });
 
-      // Freeze balance
       const newBalance = balance - input.amount;
       await updateUser(ctx.user.id, { balance: newBalance.toFixed(8) });
       await createWithdrawal({
@@ -106,7 +148,8 @@ export const fundsRouter = router({
       return listFundTransactions(ctx.user.id, input.page, input.limit);
     }),
 
-  // Admin
+  // ─── Admin ─────────────────────────────────────────────────────────────────
+
   adminDeposits: adminProcedure
     .input(z.object({ page: z.number().default(1), limit: z.number().default(20) }))
     .query(async ({ input }) => {
@@ -182,7 +225,6 @@ export const fundsRouter = router({
           reviewedAt: new Date(),
         });
       } else {
-        // Refund balance on rejection
         const user = await getUserById(withdrawal.userId);
         if (user) {
           const refund = parseFloat(withdrawal.amount);
@@ -207,6 +249,8 @@ export const fundsRouter = router({
       return { success: true };
     }),
 
+  // ─── Admin: System Config ──────────────────────────────────────────────────
+
   adminGetConfig: adminProcedure.query(async () => {
     return listSystemConfig();
   }),
@@ -216,5 +260,48 @@ export const fundsRouter = router({
     .mutation(async ({ input }) => {
       await setSystemConfig(input.key, input.value);
       return { success: true };
+    }),
+
+  // ─── Admin: BSC Wallet Management ──────────────────────────────────────────
+
+  adminWalletStatus: adminProcedure.query(async () => {
+    return getWalletStatus();
+  }),
+
+  adminInitWallet: adminProcedure.mutation(async () => {
+    const result = await initHDWallet();
+    return { success: true, mainAddress: result.mainAddress };
+  }),
+
+  adminImportWallet: adminProcedure
+    .input(z.object({ mnemonic: z.string().min(10) }))
+    .mutation(async ({ input }) => {
+      const result = await importHDWallet(input.mnemonic);
+      return { success: true, mainAddress: result.mainAddress };
+    }),
+
+  adminSetBscscanKey: adminProcedure
+    .input(z.object({ apiKey: z.string().min(1) }))
+    .mutation(async ({ input }) => {
+      await setSystemConfig("bscscan_api_key", input.apiKey);
+      return { success: true };
+    }),
+
+  adminScanDeposits: adminProcedure.mutation(async () => {
+    const result = await scanDeposits();
+    return result;
+  }),
+
+  adminCollectDeposits: adminProcedure.mutation(async () => {
+    const result = await collectDeposits();
+    return result;
+  }),
+
+  adminCheckAddressBalance: adminProcedure
+    .input(z.object({ address: z.string().min(10) }))
+    .query(async ({ input }) => {
+      const usdtBalance = await getUSDTBalance(input.address);
+      const bnbBalance = await getBNBBalance(input.address);
+      return { usdtBalance, bnbBalance };
     }),
 });

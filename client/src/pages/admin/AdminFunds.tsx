@@ -7,14 +7,14 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { CheckCircle, XCircle, ChevronLeft, ChevronRight, Wallet, Settings, Save } from "lucide-react";
+import { CheckCircle, XCircle, ChevronLeft, ChevronRight, Wallet, Settings, Save, RefreshCw, ArrowDownToLine, Shield, Key } from "lucide-react";
 import { toast } from "sonner";
 
 const STATUS_COLORS: Record<string, string> = {
   pending: "bg-yellow-500/15 text-yellow-500",
-  approved: "bg-profit text-profit",
-  rejected: "bg-loss text-loss",
-  completed: "bg-profit text-profit",
+  approved: "bg-emerald-500/15 text-emerald-500",
+  rejected: "bg-red-500/15 text-red-500",
+  completed: "bg-emerald-500/15 text-emerald-500",
 };
 const STATUS_LABELS: Record<string, string> = {
   pending: "待审核", approved: "已通过", rejected: "已拒绝", completed: "已完成",
@@ -30,25 +30,52 @@ export default function AdminFunds() {
   const [txHashInput, setTxHashInput] = useState("");
 
   // System config state
-  const [walletAddress, setWalletAddress] = useState("");
   const [withdrawalFeeRate, setWithdrawalFeeRate] = useState("");
   const [withdrawalMinAmount, setWithdrawalMinAmount] = useState("");
+  const [bscscanKey, setBscscanKey] = useState("");
+  const [importMnemonic, setImportMnemonic] = useState("");
 
   const { data: deposits } = trpc.funds.adminDeposits.useQuery({ page: depPage, limit: 20 });
   const { data: withdrawals } = trpc.funds.adminWithdrawals.useQuery({ page: witPage, limit: 20 });
   const { data: configs } = trpc.funds.adminGetConfig.useQuery();
+  const { data: walletStatus, refetch: refetchWallet } = trpc.funds.adminWalletStatus.useQuery();
 
   useEffect(() => {
     if (configs) {
       const configMap = new Map(configs.map((c: any) => [c.configKey, c.configValue]));
-      setWalletAddress((configMap.get("platform_deposit_address") as string) || "");
       setWithdrawalFeeRate((configMap.get("withdrawal_fee_rate") as string) || "0.01");
       setWithdrawalMinAmount((configMap.get("withdrawal_min_amount") as string) || "10");
+      setBscscanKey((configMap.get("bscscan_api_key") as string) || "");
     }
   }, [configs]);
 
   const setConfigMutation = trpc.funds.adminSetConfig.useMutation({
     onSuccess: () => { toast.success("配置已保存"); utils.funds.adminGetConfig.invalidate(); },
+    onError: (e: any) => toast.error(e.message),
+  });
+
+  const initWalletMutation = trpc.funds.adminInitWallet.useMutation({
+    onSuccess: (data) => { toast.success(`HD钱包已创建，主地址: ${data.mainAddress}`); refetchWallet(); },
+    onError: (e: any) => toast.error(e.message),
+  });
+
+  const importWalletMutation = trpc.funds.adminImportWallet.useMutation({
+    onSuccess: (data) => { toast.success(`钱包已导入，主地址: ${data.mainAddress}`); refetchWallet(); setImportMnemonic(""); },
+    onError: (e: any) => toast.error(e.message),
+  });
+
+  const setBscscanMutation = trpc.funds.adminSetBscscanKey.useMutation({
+    onSuccess: () => { toast.success("BSCScan API Key 已保存"); utils.funds.adminGetConfig.invalidate(); },
+    onError: (e: any) => toast.error(e.message),
+  });
+
+  const scanMutation = trpc.funds.adminScanDeposits.useMutation({
+    onSuccess: (data) => { toast.success(`扫描完成: 检测到 ${data.detected} 笔新充值，已自动到账 ${data.credited} 笔`); utils.funds.adminDeposits.invalidate(); },
+    onError: (e: any) => toast.error(e.message),
+  });
+
+  const collectMutation = trpc.funds.adminCollectDeposits.useMutation({
+    onSuccess: (data) => { toast.success(`归集完成: ${data.collected} 笔成功${data.errors.length ? `，${data.errors.length} 笔失败` : ""}`); },
     onError: (e: any) => toast.error(e.message),
   });
 
@@ -80,10 +107,6 @@ export default function AdminFunds() {
     } else {
       reviewWitMutation.mutate({ withdrawalId: reviewItem.id, approved: false, reviewNote: rejectReason });
     }
-  };
-
-  const saveConfig = (key: string, value: string) => {
-    setConfigMutation.mutate({ key, value });
   };
 
   const isPending = reviewDepMutation.isPending || reviewWitMutation.isPending;
@@ -130,41 +153,149 @@ export default function AdminFunds() {
       <div className="space-y-6">
         <div>
           <h1 className="text-2xl font-bold">资金管理</h1>
-          <p className="text-muted-foreground text-sm mt-1">审核充提申请、配置收款钱包和手续费</p>
+          <p className="text-muted-foreground text-sm mt-1">BSC钱包管理、充提审核、系统配置</p>
         </div>
 
-        <Tabs defaultValue="settings">
+        <Tabs defaultValue="wallet">
           <TabsList className="bg-secondary">
+            <TabsTrigger value="wallet"><Wallet className="w-3.5 h-3.5 mr-1" />钱包管理</TabsTrigger>
             <TabsTrigger value="settings"><Settings className="w-3.5 h-3.5 mr-1" />系统设置</TabsTrigger>
-            <TabsTrigger value="deposits">充值审核 {deposits?.items.filter((d: any) => d.status === "pending").length ? `(${deposits.items.filter((d: any) => d.status === "pending").length})` : ""}</TabsTrigger>
-            <TabsTrigger value="withdrawals">提现审核 {withdrawals?.items.filter((w: any) => w.status === "pending").length ? `(${withdrawals.items.filter((w: any) => w.status === "pending").length})` : ""}</TabsTrigger>
+            <TabsTrigger value="deposits">
+              充值审核
+              {deposits?.items.filter((d: any) => d.status === "pending").length ? ` (${deposits.items.filter((d: any) => d.status === "pending").length})` : ""}
+            </TabsTrigger>
+            <TabsTrigger value="withdrawals">
+              提现审核
+              {withdrawals?.items.filter((w: any) => w.status === "pending").length ? ` (${withdrawals.items.filter((w: any) => w.status === "pending").length})` : ""}
+            </TabsTrigger>
           </TabsList>
 
-          {/* System Settings Tab */}
+          {/* ─── Wallet Management Tab ─────────────────────────────────── */}
+          <TabsContent value="wallet" className="mt-4 space-y-4">
+            {/* Wallet Status */}
+            <Card className="bg-card border-border">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Shield className="w-4 h-4 text-primary" /> HD钱包状态
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {walletStatus?.initialized ? (
+                  <div className="space-y-3">
+                    <div className="p-4 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
+                      <div className="flex items-center gap-2 mb-2">
+                        <CheckCircle className="w-4 h-4 text-emerald-500" />
+                        <span className="text-sm font-medium text-emerald-500">钱包已初始化</span>
+                      </div>
+                      <div className="space-y-1 text-sm">
+                        <p className="text-muted-foreground">主地址（归集地址）：</p>
+                        <p className="font-mono text-foreground break-all">{walletStatus.mainAddress}</p>
+                      </div>
+                      <div className="mt-2 text-xs text-muted-foreground">
+                        已派生 {walletStatus.nextIndex} 个用户充值地址
+                      </div>
+                    </div>
+
+                    {/* Scan & Collect Buttons */}
+                    <div className="grid grid-cols-2 gap-3">
+                      <Button
+                        variant="outline"
+                        className="bg-transparent"
+                        onClick={() => scanMutation.mutate()}
+                        disabled={scanMutation.isPending}
+                      >
+                        <RefreshCw className={`w-4 h-4 mr-2 ${scanMutation.isPending ? "animate-spin" : ""}`} />
+                        {scanMutation.isPending ? "扫描中..." : "扫描充值"}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        className="bg-transparent"
+                        onClick={() => collectMutation.mutate()}
+                        disabled={collectMutation.isPending}
+                      >
+                        <ArrowDownToLine className={`w-4 h-4 mr-2 ${collectMutation.isPending ? "animate-spin" : ""}`} />
+                        {collectMutation.isPending ? "归集中..." : "归集资金"}
+                      </Button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      「扫描充值」检测所有用户地址的USDT入账并自动到账；「归集资金」将用户地址的USDT转到主地址。
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="p-4 rounded-lg bg-yellow-500/10 border border-yellow-500/20">
+                      <p className="text-sm text-yellow-600 font-medium">HD钱包尚未初始化</p>
+                      <p className="text-xs text-yellow-600/80 mt-1">请创建新钱包或导入已有助记词来初始化充值系统。</p>
+                    </div>
+
+                    <div className="grid md:grid-cols-2 gap-4">
+                      <Card className="bg-secondary/30 border-border">
+                        <CardContent className="p-4 space-y-3">
+                          <h4 className="text-sm font-medium">方式一：创建新钱包</h4>
+                          <p className="text-xs text-muted-foreground">系统将自动生成助记词并创建HD钱包，请务必备份助记词。</p>
+                          <Button
+                            className="w-full"
+                            onClick={() => initWalletMutation.mutate()}
+                            disabled={initWalletMutation.isPending}
+                          >
+                            {initWalletMutation.isPending ? "创建中..." : "创建新钱包"}
+                          </Button>
+                        </CardContent>
+                      </Card>
+
+                      <Card className="bg-secondary/30 border-border">
+                        <CardContent className="p-4 space-y-3">
+                          <h4 className="text-sm font-medium">方式二：导入已有钱包</h4>
+                          <Input
+                            placeholder="输入12/24位助记词，空格分隔"
+                            value={importMnemonic}
+                            onChange={(e) => setImportMnemonic(e.target.value)}
+                            className="bg-input border-border text-sm"
+                            type="password"
+                          />
+                          <Button
+                            className="w-full"
+                            onClick={() => importWalletMutation.mutate({ mnemonic: importMnemonic })}
+                            disabled={importWalletMutation.isPending || !importMnemonic}
+                          >
+                            {importWalletMutation.isPending ? "导入中..." : "导入钱包"}
+                          </Button>
+                        </CardContent>
+                      </Card>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* BSCScan API Key */}
+            <Card className="bg-card border-border">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Key className="w-4 h-4 text-primary" /> BSCScan API Key
+                </CardTitle>
+                <p className="text-xs text-muted-foreground">用于查询链上交易记录，可在 bscscan.com 免费申请</p>
+              </CardHeader>
+              <CardContent>
+                <div className="flex gap-3">
+                  <Input
+                    placeholder="输入 BSCScan API Key"
+                    value={bscscanKey}
+                    onChange={(e) => setBscscanKey(e.target.value)}
+                    className="bg-input border-border text-sm flex-1"
+                    type="password"
+                  />
+                  <Button onClick={() => setBscscanMutation.mutate({ apiKey: bscscanKey })} disabled={setBscscanMutation.isPending || !bscscanKey}>
+                    <Save className="w-4 h-4 mr-1" />保存
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* ─── System Settings Tab ───────────────────────────────────── */}
           <TabsContent value="settings" className="mt-4">
             <div className="grid md:grid-cols-2 gap-4">
-              {/* Wallet Address */}
-              <Card className="bg-card border-border md:col-span-2">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-base flex items-center gap-2"><Wallet className="w-4 h-4 text-primary" />平台收款钱包地址</CardTitle>
-                  <p className="text-xs text-muted-foreground">用户充值时将看到此地址，请确保是您的 BSC (BEP-20) USDT 收款地址</p>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex gap-3">
-                    <Input
-                      placeholder="输入 BSC 链 USDT 收款钱包地址 (0x...)"
-                      value={walletAddress}
-                      onChange={(e) => setWalletAddress(e.target.value)}
-                      className="bg-input border-border font-mono text-sm flex-1"
-                    />
-                    <Button onClick={() => saveConfig("platform_deposit_address", walletAddress)} disabled={setConfigMutation.isPending}>
-                      <Save className="w-4 h-4 mr-1" />保存
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* Withdrawal Fee Rate */}
               <Card className="bg-card border-border">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-base">提现手续费率</CardTitle>
@@ -172,15 +303,8 @@ export default function AdminFunds() {
                 </CardHeader>
                 <CardContent>
                   <div className="flex gap-3">
-                    <Input
-                      type="number"
-                      step="0.001"
-                      placeholder="如：0.01"
-                      value={withdrawalFeeRate}
-                      onChange={(e) => setWithdrawalFeeRate(e.target.value)}
-                      className="bg-input border-border text-sm flex-1"
-                    />
-                    <Button onClick={() => saveConfig("withdrawal_fee_rate", withdrawalFeeRate)} disabled={setConfigMutation.isPending}>
+                    <Input type="number" step="0.001" placeholder="如：0.01" value={withdrawalFeeRate} onChange={(e) => setWithdrawalFeeRate(e.target.value)} className="bg-input border-border text-sm flex-1" />
+                    <Button onClick={() => setConfigMutation.mutate({ key: "withdrawal_fee_rate", value: withdrawalFeeRate })} disabled={setConfigMutation.isPending}>
                       <Save className="w-4 h-4 mr-1" />保存
                     </Button>
                   </div>
@@ -188,7 +312,6 @@ export default function AdminFunds() {
                 </CardContent>
               </Card>
 
-              {/* Min Withdrawal */}
               <Card className="bg-card border-border">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-base">最低提现金额</CardTitle>
@@ -196,14 +319,8 @@ export default function AdminFunds() {
                 </CardHeader>
                 <CardContent>
                   <div className="flex gap-3">
-                    <Input
-                      type="number"
-                      placeholder="如：10"
-                      value={withdrawalMinAmount}
-                      onChange={(e) => setWithdrawalMinAmount(e.target.value)}
-                      className="bg-input border-border text-sm flex-1"
-                    />
-                    <Button onClick={() => saveConfig("withdrawal_min_amount", withdrawalMinAmount)} disabled={setConfigMutation.isPending}>
+                    <Input type="number" placeholder="如：10" value={withdrawalMinAmount} onChange={(e) => setWithdrawalMinAmount(e.target.value)} className="bg-input border-border text-sm flex-1" />
+                    <Button onClick={() => setConfigMutation.mutate({ key: "withdrawal_min_amount", value: withdrawalMinAmount })} disabled={setConfigMutation.isPending}>
                       <Save className="w-4 h-4 mr-1" />保存
                     </Button>
                   </div>
@@ -212,6 +329,7 @@ export default function AdminFunds() {
             </div>
           </TabsContent>
 
+          {/* ─── Deposits Tab ──────────────────────────────────────────── */}
           <TabsContent value="deposits" className="mt-4">
             <Card className="bg-card border-border">
               <CardContent className="p-0">
@@ -227,15 +345,24 @@ export default function AdminFunds() {
             )}
           </TabsContent>
 
+          {/* ─── Withdrawals Tab ───────────────────────────────────────── */}
           <TabsContent value="withdrawals" className="mt-4">
             <Card className="bg-card border-border">
               <CardContent className="p-0">
                 {renderTable(withdrawals?.items ?? [], "withdrawal")}
               </CardContent>
             </Card>
+            {Math.ceil((withdrawals?.total ?? 0) / 20) > 1 && (
+              <div className="flex items-center justify-center gap-3 mt-4">
+                <Button variant="outline" size="sm" className="bg-transparent" onClick={() => setWitPage(p => Math.max(1, p - 1))} disabled={witPage === 1}><ChevronLeft className="w-4 h-4" /></Button>
+                <span className="text-sm text-muted-foreground">{witPage}</span>
+                <Button variant="outline" size="sm" className="bg-transparent" onClick={() => setWitPage(p => p + 1)} disabled={witPage >= Math.ceil((withdrawals?.total ?? 0) / 20)}><ChevronRight className="w-4 h-4" /></Button>
+              </div>
+            )}
           </TabsContent>
         </Tabs>
 
+        {/* Review Dialog */}
         <Dialog open={!!reviewItem} onOpenChange={(v) => !v && setReviewItem(null)}>
           <DialogContent className="bg-card border-border">
             <DialogHeader><DialogTitle>审核{reviewType === "deposit" ? "充值" : "提现"}申请</DialogTitle></DialogHeader>
@@ -243,7 +370,7 @@ export default function AdminFunds() {
               <div className="p-4 rounded-lg bg-secondary/50 space-y-2 text-sm">
                 <div className="flex justify-between"><span className="text-muted-foreground">用户ID</span><span>#{reviewItem?.userId}</span></div>
                 <div className="flex justify-between"><span className="text-muted-foreground">金额</span><span className="font-semibold">{parseFloat(reviewItem?.amount || "0").toFixed(4)} USDT</span></div>
-                {reviewType === "withdrawal" && reviewItem?.fee && (
+                {reviewItem?.fee && (
                   <div className="flex justify-between"><span className="text-muted-foreground">手续费</span><span>{parseFloat(reviewItem.fee).toFixed(4)} USDT</span></div>
                 )}
                 {reviewItem?.txHash && <div className="flex justify-between"><span className="text-muted-foreground">TxHash</span><span className="font-mono text-xs break-all">{reviewItem.txHash}</span></div>}

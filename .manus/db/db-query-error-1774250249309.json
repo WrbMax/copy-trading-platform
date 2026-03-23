@@ -1,0 +1,8 @@
+{
+  "query": "ALTER TABLE users ADD depositAddress varchar(128);",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 2yRRhmQmjmz9LMP.root --database 3xjoeN6gTpdmQoJAnkq7pe --execute ALTER TABLE users ADD depositAddress varchar(128);",
+  "returncode": 1,
+  "logs": [
+    "ERROR 9001 (HY000) at line 1: PD server timeout:"
+  ]
+}
