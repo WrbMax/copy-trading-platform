@@ -125,6 +125,13 @@ export async function listUsers(page = 1, limit = 20) {
   return { items, total: Number(count) };
 }
 
+export async function getAdminUser() {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(users).where(eq(users.role, "admin")).limit(1);
+  return result[0] ?? null;
+}
+
 export async function getUserReferralChain(userId: number): Promise<Array<{ id: number; revenueShareRatio: string }>> {
   const db = await getDb();
   if (!db) return [];

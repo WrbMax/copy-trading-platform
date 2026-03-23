@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Coins, ArrowRightLeft, Gift, Info, TrendingDown, CheckCircle, XCircle } from "lucide-react";
+import { Coins, ArrowRightLeft, Gift, Info, TrendingDown, CheckCircle, XCircle, Clock } from "lucide-react";
 import { toast } from "sonner";
 
 const TYPE_LABELS: Record<string, string> = {
@@ -17,6 +17,16 @@ const TYPE_LABELS: Record<string, string> = {
   admin_deduct: "管理员扣减",
 };
 
+const MS_30_DAYS = 30 * 24 * 60 * 60 * 1000;
+
+function getDaysUntilNextRedeem(lastRedeemDateStr: string | null | undefined): number | null {
+  if (!lastRedeemDateStr) return null;
+  const last = new Date(lastRedeemDateStr).getTime();
+  const diff = Date.now() - last;
+  if (diff >= MS_30_DAYS) return 0;
+  return Math.ceil((MS_30_DAYS - diff) / (24 * 60 * 60 * 1000));
+}
+
 export default function Points() {
   const utils = trpc.useUtils();
   const { data: balance } = trpc.points.myBalance.useQuery();
@@ -25,7 +35,7 @@ export default function Points() {
   const { data: profile } = trpc.user.profile.useQuery();
 
   const [transferOpen, setTransferOpen] = useState(false);
-  const [toUserId, setToUserId] = useState("");
+  const [toInviteCode, setToInviteCode] = useState("");
   const [transferAmount, setTransferAmount] = useState("");
 
   const redeemMutation = trpc.points.redeem.useMutation({
@@ -40,12 +50,12 @@ export default function Points() {
   });
 
   const transferMutation = trpc.points.transfer.useMutation({
-    onSuccess: () => {
-      toast.success("积分转出成功");
+    onSuccess: (r) => {
+      toast.success(`积分已成功转给 ${r.receiverName}`);
       utils.points.myBalance.invalidate();
       utils.points.myTransactions.invalidate();
       setTransferOpen(false);
-      setToUserId("");
+      setToInviteCode("");
       setTransferAmount("");
     },
     onError: (e) => toast.error(e.message),
@@ -56,8 +66,10 @@ export default function Points() {
   const totalLoss = stats?.totalLoss ?? 0;
   const canRedeem = netPnl < 0;
   const redeemablePoints = canRedeem ? Math.floor(Math.abs(netPnl)) : 0;
-  const currentMonth = new Date().toISOString().slice(0, 7);
-  const alreadyRedeemedThisMonth = profile?.lastPointsRedeemMonth === currentMonth;
+
+  // 30-day check using full ISO timestamp
+  const daysLeft = getDaysUntilNextRedeem(profile?.lastPointsRedeemMonth);
+  const alreadyRedeemed = daysLeft !== null && daysLeft > 0;
 
   return (
     <UserLayout>
@@ -77,6 +89,11 @@ export default function Points() {
                   <p className="text-3xl font-bold text-foreground">{balance?.points ?? 0}</p>
                   <p className="text-muted-foreground">积分</p>
                 </div>
+                {profile?.inviteCode && (
+                  <p className="text-xs text-muted-foreground mt-2">
+                    我的邀请码：<span className="font-mono text-foreground font-semibold">{profile.inviteCode}</span>
+                  </p>
+                )}
               </div>
               <Coins className="w-10 h-10 text-primary opacity-60" />
             </div>
@@ -91,15 +108,31 @@ export default function Points() {
                   <DialogHeader><DialogTitle>积分转让</DialogTitle></DialogHeader>
                   <div className="space-y-4 mt-2">
                     <div className="space-y-2">
-                      <Label>目标用户ID</Label>
-                      <Input placeholder="请输入用户ID" value={toUserId} onChange={(e) => setToUserId(e.target.value)} className="bg-input border-border" />
+                      <Label>收方邀请码</Label>
+                      <Input
+                        placeholder="请输入对方的邀请码"
+                        value={toInviteCode}
+                        onChange={(e) => setToInviteCode(e.target.value)}
+                        className="bg-input border-border font-mono"
+                      />
+                      <p className="text-xs text-muted-foreground">邀请码可在对方的积分中心页面查看</p>
                     </div>
                     <div className="space-y-2">
                       <Label>转让数量</Label>
-                      <Input type="number" placeholder="请输入积分数量" value={transferAmount} onChange={(e) => setTransferAmount(e.target.value)} className="bg-input border-border" />
+                      <Input
+                        type="number"
+                        placeholder="请输入积分数量"
+                        value={transferAmount}
+                        onChange={(e) => setTransferAmount(e.target.value)}
+                        className="bg-input border-border"
+                      />
                       <p className="text-xs text-muted-foreground">当前余额：{balance?.points ?? 0} 积分</p>
                     </div>
-                    <Button className="w-full" onClick={() => transferMutation.mutate({ toUserId: parseInt(toUserId), amount: parseInt(transferAmount) })} disabled={transferMutation.isPending || !toUserId || !transferAmount}>
+                    <Button
+                      className="w-full"
+                      onClick={() => transferMutation.mutate({ toInviteCode: toInviteCode.trim(), amount: parseInt(transferAmount) })}
+                      disabled={transferMutation.isPending || !toInviteCode || !transferAmount}
+                    >
                       {transferMutation.isPending ? "转让中..." : "确认转让"}
                     </Button>
                   </div>
@@ -109,7 +142,7 @@ export default function Points() {
           </CardContent>
         </Card>
 
-        {/* Net Loss Redeem Card - Prominent */}
+        {/* Net Loss Redeem Card */}
         <Card className="bg-card border-primary/30 border-2">
           <CardHeader className="pb-3">
             <CardTitle className="text-base flex items-center gap-2">
@@ -138,12 +171,12 @@ export default function Points() {
 
             {/* Redeem Status */}
             <div className="p-4 rounded-xl bg-secondary/30 border border-border">
-              {alreadyRedeemedThisMonth ? (
+              {alreadyRedeemed ? (
                 <div className="flex items-center gap-3">
-                  <CheckCircle className="w-8 h-8 text-primary flex-shrink-0" />
+                  <Clock className="w-8 h-8 text-primary flex-shrink-0" />
                   <div>
-                    <p className="font-medium text-sm">本月已兑换</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">每月仅限兑换一次，下月可再次兑换</p>
+                    <p className="font-medium text-sm">冷却中，还需等待 {daysLeft} 天</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">每次兑换间隔至少 30 天</p>
                   </div>
                 </div>
               ) : canRedeem ? (
@@ -187,22 +220,17 @@ export default function Points() {
           <CardContent className="p-5 space-y-3">
             <h3 className="font-medium flex items-center gap-2"><Info className="w-4 h-4 text-primary" />积分兑换规则</h3>
             <div className="text-sm text-muted-foreground space-y-2">
-              <div className="flex items-start gap-2">
-                <span className="w-5 h-5 rounded-full bg-primary/15 text-primary text-xs flex items-center justify-center flex-shrink-0 mt-0.5">1</span>
-                <p>当月净亏损（总亏损 - 总盈利）可按 <span className="text-foreground font-medium">1 USDT = 1 积分</span> 兑换</p>
-              </div>
-              <div className="flex items-start gap-2">
-                <span className="w-5 h-5 rounded-full bg-primary/15 text-primary text-xs flex items-center justify-center flex-shrink-0 mt-0.5">2</span>
-                <p>每月仅限兑换一次，兑换后当月净亏损记录清零</p>
-              </div>
-              <div className="flex items-start gap-2">
-                <span className="w-5 h-5 rounded-full bg-primary/15 text-primary text-xs flex items-center justify-center flex-shrink-0 mt-0.5">3</span>
-                <p>积分可在用户之间自由转让，无手续费</p>
-              </div>
-              <div className="flex items-start gap-2">
-                <span className="w-5 h-5 rounded-full bg-primary/15 text-primary text-xs flex items-center justify-center flex-shrink-0 mt-0.5">4</span>
-                <p>积分暂不可直接兑换为USDT（后续版本开放）</p>
-              </div>
+              {[
+                "当月净亏损（总亏损 - 总盈利）可按 1 USDT = 1 积分 兑换",
+                "每次兑换间隔至少 30 天，兑换后净亏损记录清零",
+                "积分可通过对方邀请码在用户之间自由转让，无手续费",
+                "积分暂不可直接兑换为USDT（后续版本开放）",
+              ].map((text, i) => (
+                <div key={i} className="flex items-start gap-2">
+                  <span className="w-5 h-5 rounded-full bg-primary/15 text-primary text-xs flex items-center justify-center flex-shrink-0 mt-0.5">{i + 1}</span>
+                  <p>{text}</p>
+                </div>
+              ))}
             </div>
           </CardContent>
         </Card>
@@ -225,7 +253,12 @@ export default function Points() {
                       <p className={`font-semibold ${tx.amount > 0 ? "text-profit" : "text-loss"}`}>
                         {tx.amount > 0 ? "+" : ""}{tx.amount}
                       </p>
-                      <p className="text-xs text-muted-foreground">{new Date(tx.createdAt).toLocaleDateString()}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {new Date(tx.createdAt).toLocaleString("zh-CN", {
+                          year: "numeric", month: "2-digit", day: "2-digit",
+                          hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+                        })}
+                      </p>
                     </div>
                   </div>
                 ))}

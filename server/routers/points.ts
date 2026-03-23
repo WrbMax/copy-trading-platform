@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   addPointsTransaction,
   getUserById,
+  getUserByInviteCode,
   getUserOrderStats,
   listPointsTransactions,
   listAllPointsTransactions,
@@ -10,6 +11,8 @@ import {
 } from "../db";
 import { protectedProcedure, router } from "../_core/trpc";
 import { adminProcedure } from "../_core/trpc";
+
+const MS_30_DAYS = 30 * 24 * 60 * 60 * 1000;
 
 export const pointsRouter = router({
   myBalance: protectedProcedure.query(async ({ ctx }) => {
@@ -32,20 +35,26 @@ export const pointsRouter = router({
     const netPnl = stats.netPnl;
     if (netPnl >= 0) throw new TRPCError({ code: "BAD_REQUEST", message: "当前无净亏损，无法兑换积分" });
 
-    // Check monthly limit
-    const currentMonth = new Date().toISOString().slice(0, 7);
-    if (user.lastPointsRedeemMonth === currentMonth) {
-      throw new TRPCError({ code: "BAD_REQUEST", message: "本月已兑换过积分，每月仅限一次" });
+    // Check 30-day limit: use lastPointsRedeemMonth as ISO date string (we'll store full timestamp)
+    if (user.lastPointsRedeemMonth) {
+      const lastRedeemTime = new Date(user.lastPointsRedeemMonth).getTime();
+      const now = Date.now();
+      const diffMs = now - lastRedeemTime;
+      if (diffMs < MS_30_DAYS) {
+        const daysLeft = Math.ceil((MS_30_DAYS - diffMs) / (24 * 60 * 60 * 1000));
+        throw new TRPCError({ code: "BAD_REQUEST", message: `距上次兑换不足30天，还需等待 ${daysLeft} 天` });
+      }
     }
 
     const redeemAmount = Math.floor(Math.abs(netPnl)); // 1U = 1 point
     if (redeemAmount <= 0) throw new TRPCError({ code: "BAD_REQUEST", message: "可兑换积分数量不足" });
 
+    const now = new Date();
+    const nowIso = now.toISOString();
     const newPoints = (user.points ?? 0) + redeemAmount;
     await updateUser(ctx.user.id, {
       points: newPoints,
-      lastPointsRedeemMonth: currentMonth,
-      // Reset loss tracking after redemption
+      lastPointsRedeemMonth: nowIso, // store full ISO timestamp for 30-day check
       totalLoss: "0",
       totalProfit: "0",
     });
@@ -54,35 +63,44 @@ export const pointsRouter = router({
       type: "redeem",
       amount: redeemAmount,
       balanceAfter: newPoints,
-      redeemMonth: currentMonth,
+      redeemMonth: nowIso.slice(0, 7),
       note: `净亏损兑换积分 ${redeemAmount} 积分`,
     });
     return { success: true, pointsAdded: redeemAmount, newBalance: newPoints };
   }),
 
+  // Transfer by invite code (more user-friendly than numeric userId)
   transfer: protectedProcedure
     .input(z.object({
-      toUserId: z.number(),
+      toInviteCode: z.string().min(1),
       amount: z.number().int().positive(),
     }))
     .mutation(async ({ input, ctx }) => {
-      if (input.toUserId === ctx.user.id) throw new TRPCError({ code: "BAD_REQUEST", message: "不能转给自己" });
       const sender = await getUserById(ctx.user.id);
       if (!sender) throw new TRPCError({ code: "NOT_FOUND" });
+
+      // Find receiver by invite code
+      const receiver = await getUserByInviteCode(input.toInviteCode.trim());
+      if (!receiver) throw new TRPCError({ code: "NOT_FOUND", message: "未找到该邀请码对应的用户" });
+      if (receiver.id === ctx.user.id) throw new TRPCError({ code: "BAD_REQUEST", message: "不能转给自己" });
       if ((sender.points ?? 0) < input.amount) throw new TRPCError({ code: "BAD_REQUEST", message: "积分余额不足" });
-      const receiver = await getUserById(input.toUserId);
-      if (!receiver) throw new TRPCError({ code: "NOT_FOUND", message: "目标用户不存在" });
 
       const senderNew = (sender.points ?? 0) - input.amount;
       const receiverNew = (receiver.points ?? 0) + input.amount;
 
       await updateUser(ctx.user.id, { points: senderNew });
-      await updateUser(input.toUserId, { points: receiverNew });
+      await updateUser(receiver.id, { points: receiverNew });
 
-      await addPointsTransaction({ userId: ctx.user.id, type: "transfer_out", amount: -input.amount, balanceAfter: senderNew, relatedUserId: input.toUserId, note: `转出积分给用户 #${input.toUserId}` });
-      await addPointsTransaction({ userId: input.toUserId, type: "transfer_in", amount: input.amount, balanceAfter: receiverNew, relatedUserId: ctx.user.id, note: `收到来自用户 #${ctx.user.id} 的积分` });
+      await addPointsTransaction({
+        userId: ctx.user.id, type: "transfer_out", amount: -input.amount, balanceAfter: senderNew,
+        relatedUserId: receiver.id, note: `转出积分给 ${receiver.name || receiver.email}（邀请码 ${input.toInviteCode}）`,
+      });
+      await addPointsTransaction({
+        userId: receiver.id, type: "transfer_in", amount: input.amount, balanceAfter: receiverNew,
+        relatedUserId: ctx.user.id, note: `收到来自 ${sender.name || sender.email} 的积分`,
+      });
 
-      return { success: true };
+      return { success: true, receiverName: receiver.name || receiver.email };
     }),
 
   adminAdjust: adminProcedure

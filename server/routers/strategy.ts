@@ -125,7 +125,7 @@ export const strategyRouter = router({
       apiKey: z.string().optional(),
       apiSecret: z.string().optional(),
       webhookSecret: z.string().optional(),
-      exchange: z.enum(["okx", "binance"]).default("okx"),
+      exchange: z.enum(["okx", "binance", "bybit", "bitget", "gate"]).default("okx"),
       passphrase: z.string().optional(),
     }))
     .mutation(async ({ input }) => {
@@ -161,7 +161,7 @@ export const strategyRouter = router({
       apiKey: z.string().optional(),
       apiSecret: z.string().optional(),
       webhookSecret: z.string().optional(),
-      exchange: z.enum(["okx", "binance"]).optional(),
+      exchange: z.enum(["okx", "binance", "bybit", "bitget", "gate"]).optional(),
       passphrase: z.string().optional(),
     }))
     .mutation(async ({ input }) => {

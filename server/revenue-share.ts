@@ -1,15 +1,12 @@
 import {
   addFundTransaction,
   createRevenueShareRecords,
-  getDb,
-  getSystemConfig,
+  getAdminUser,
   getUserById,
   getUserReferralChain,
   updateCopyOrder,
   updateUser,
 } from "./db";
-import { users } from "../drizzle/schema";
-import { eq } from "drizzle-orm";
 
 /**
  * Process revenue share for a closed profitable order.
@@ -41,8 +38,31 @@ export async function processRevenueShare(params: {
   if (totalDeducted <= 0) return;
 
   // Get the referral chain (parent, grandparent, ...)
-  const chain = await getUserReferralChain(traderId);
-  if (chain.length === 0) return;
+  // If no chain, fallback to admin as the recipient
+  let chain = await getUserReferralChain(traderId);
+  if (chain.length === 0) {
+    const admin = await getAdminUser();
+    // Don't share with self
+    if (!admin || admin.id === traderId) {
+      // Still deduct from trader and record as platform income
+      const updatedTrader = await getUserById(traderId);
+      if (updatedTrader) {
+        const newBalance = Math.max(0, parseFloat(updatedTrader.balance || "0") - totalDeducted);
+        await updateUser(traderId, { balance: newBalance.toFixed(8) });
+        await addFundTransaction({
+          userId: traderId,
+          type: "revenue_share_out",
+          amount: (-totalDeducted).toFixed(8),
+          balanceAfter: newBalance.toFixed(8),
+          relatedId: copyOrderId,
+          note: `收益分成扣减（归平台）`,
+        });
+        await updateCopyOrder(copyOrderId, { revenueShareDeducted: totalDeducted.toFixed(8) });
+      }
+      return;
+    }
+    chain = [{ id: admin.id, revenueShareRatio: admin.revenueShareRatio }];
+  }
 
   const records: Array<{
     copyOrderId: number;

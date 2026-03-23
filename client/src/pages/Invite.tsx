@@ -10,7 +10,8 @@ export default function Invite() {
   const { data: teamStats } = trpc.user.teamStats.useQuery();
 
   const inviteCode = profile?.inviteCode || "";
-  const inviteUrl = `${window.location.origin}/register?ref=${inviteCode}`;
+  const basePath = import.meta.env.BASE_URL?.replace(/\/$/, '') || '';
+  const inviteUrl = `${window.location.origin}${basePath}/register?ref=${inviteCode}`;
 
   const copy = (text: string, label: string) => {
     navigator.clipboard.writeText(text);
