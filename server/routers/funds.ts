@@ -226,6 +226,18 @@ export const fundsRouter = router({
           reviewNote: input.reviewNote,
           reviewedAt: new Date(),
         });
+        // Record completion note in fund transactions (balance was already deducted on submission)
+        const user = await getUserById(withdrawal.userId);
+        if (user) {
+          await addFundTransaction({
+            userId: withdrawal.userId,
+            type: "withdrawal",
+            amount: "0",
+            balanceAfter: user.balance || "0",
+            relatedId: withdrawal.id,
+            note: `提现审核通过，已打款 ${withdrawal.netAmount} USDT${input.txHash ? ` (TxHash: ${input.txHash})` : ""}`,
+          });
+        }
       } else {
         const user = await getUserById(withdrawal.userId);
         if (user) {
@@ -316,5 +328,31 @@ export const fundsRouter = router({
         stopAutoScan();
       }
       return { success: true, autoScanActive: input.enabled };
+    }),
+
+  // Admin: manually adjust user balance
+  adminAdjustBalance: adminProcedure
+    .input(z.object({
+      userId: z.number(),
+      amount: z.number().refine((v) => v !== 0, { message: "调整金额不能为0" }),
+      note: z.string().min(1, "请填写操作备注"),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      const user = await getUserById(input.userId);
+      if (!user) throw new TRPCError({ code: "NOT_FOUND", message: "用户不存在" });
+
+      const currentBalance = parseFloat(user.balance || "0");
+      const newBalance = currentBalance + input.amount;
+      if (newBalance < 0) throw new TRPCError({ code: "BAD_REQUEST", message: `余额不足，当前余额 ${currentBalance.toFixed(2)} USDT，无法扣减 ${Math.abs(input.amount).toFixed(2)} USDT` });
+
+      await updateUser(input.userId, { balance: newBalance.toFixed(8) });
+      await addFundTransaction({
+        userId: input.userId,
+        type: "admin_adjust",
+        amount: input.amount.toFixed(8),
+        balanceAfter: newBalance.toFixed(8),
+        note: `管理员调整 [${ctx.user.id}]: ${input.note}`,
+      });
+      return { success: true, newBalance: newBalance.toFixed(8) };
     }),
 });
