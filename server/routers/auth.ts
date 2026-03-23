@@ -50,16 +50,11 @@ export const authRouter = router({
   register: publicProcedure
     .input(z.object({
       email: z.string().email(),
-      code: z.string().min(6),
       password: z.string().min(8),
       name: z.string().min(1).max(50),
       inviteCode: z.string().optional(),
     }))
     .mutation(async ({ input, ctx }) => {
-      // Verify email code
-      const valid = await verifyCode(input.email, input.code, "register");
-      if (!valid) throw new TRPCError({ code: "BAD_REQUEST", message: "验证码无效或已过期" });
-
       // Check email not taken
       const existing = await getUserByEmail(input.email);
       if (existing) throw new TRPCError({ code: "CONFLICT", message: "该邮箱已注册" });
