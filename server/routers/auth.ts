@@ -78,8 +78,8 @@ export const authRouter = router({
       });
       if (!user) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "注册失败" });
 
-      // Issue session cookie
-      const token = await new SignJWT({ id: user.id, openId: user.openId, role: user.role })
+      // Issue session cookie (include appId and name for verifySession compatibility)
+      const token = await new SignJWT({ id: user.id, openId: user.openId, role: user.role, appId: ENV.appId, name: user.name ?? "" })
         .setProtectedHeader({ alg: "HS256" })
         .setExpirationTime("30d")
         .sign(new TextEncoder().encode(ENV.cookieSecret));
@@ -104,7 +104,7 @@ export const authRouter = router({
 
       await updateUser(user.id, { lastSignedIn: new Date() });
 
-      const token = await new SignJWT({ id: user.id, openId: user.openId, role: user.role })
+      const token = await new SignJWT({ id: user.id, openId: user.openId, role: user.role, appId: ENV.appId, name: user.name ?? "" })
         .setProtectedHeader({ alg: "HS256" })
         .setExpirationTime("30d")
         .sign(new TextEncoder().encode(ENV.cookieSecret));

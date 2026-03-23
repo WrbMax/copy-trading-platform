@@ -26,6 +26,7 @@ import { processRevenueShare } from "../revenue-share";
 import { encrypt, decrypt, maskApiKey } from "../crypto";
 import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
 import { adminProcedure } from "../_core/trpc";
+import { reloadSignalSource, getCopyEngineStatus } from "../copy-engine";
 
 export const strategyRouter = router({
   // Public: list active strategies
@@ -105,8 +106,10 @@ export const strategyRouter = router({
       ...s,
       apiKeyMasked: s.apiKeyEncrypted ? maskApiKey(decrypt(s.apiKeyEncrypted)) : null,
       apiSecretMasked: s.apiSecretEncrypted ? "****" : null,
+      passphraseMasked: s.passphraseEncrypted ? "****" : null,
       apiKeyEncrypted: undefined,
       apiSecretEncrypted: undefined,
+      passphraseEncrypted: undefined,
     }));
   }),
 
@@ -122,6 +125,8 @@ export const strategyRouter = router({
       apiKey: z.string().optional(),
       apiSecret: z.string().optional(),
       webhookSecret: z.string().optional(),
+      exchange: z.enum(["okx", "binance"]).default("okx"),
+      passphrase: z.string().optional(),
     }))
     .mutation(async ({ input }) => {
       await createSignalSource({
@@ -135,6 +140,8 @@ export const strategyRouter = router({
         apiKeyEncrypted: input.apiKey ? encrypt(input.apiKey) : undefined,
         apiSecretEncrypted: input.apiSecret ? encrypt(input.apiSecret) : undefined,
         webhookSecret: input.webhookSecret,
+        exchange: input.exchange,
+        passphraseEncrypted: input.passphrase ? encrypt(input.passphrase) : undefined,
         isActive: true,
       });
       return { success: true };
@@ -154,9 +161,11 @@ export const strategyRouter = router({
       apiKey: z.string().optional(),
       apiSecret: z.string().optional(),
       webhookSecret: z.string().optional(),
+      exchange: z.enum(["okx", "binance"]).optional(),
+      passphrase: z.string().optional(),
     }))
     .mutation(async ({ input }) => {
-      const { id, apiKey, apiSecret, webhookSecret: ws, ...rest } = input;
+      const { id, apiKey, apiSecret, webhookSecret: ws, exchange, passphrase, ...rest } = input;
       const updateData: Record<string, unknown> = {};
       if (rest.name !== undefined) updateData.name = rest.name;
       if (rest.symbol !== undefined) updateData.symbol = rest.symbol;
@@ -169,7 +178,11 @@ export const strategyRouter = router({
       if (apiKey !== undefined) updateData.apiKeyEncrypted = apiKey ? encrypt(apiKey) : null;
       if (apiSecret !== undefined) updateData.apiSecretEncrypted = apiSecret ? encrypt(apiSecret) : null;
       if (ws !== undefined) updateData.webhookSecret = ws || null;
+      if (exchange !== undefined) updateData.exchange = exchange;
+      if (passphrase !== undefined) updateData.passphraseEncrypted = passphrase ? encrypt(passphrase) : null;
       await updateSignalSource(id, updateData as any);
+      // Reload the copy engine for this source
+      reloadSignalSource(id).catch(console.error);
       return { success: true };
     }),
 
@@ -189,6 +202,19 @@ export const strategyRouter = router({
     .input(z.object({ orderId: z.number(), isAbnormal: z.boolean(), note: z.string().optional() }))
     .mutation(async ({ input }) => {
       await updateCopyOrder(input.orderId, { isAbnormal: input.isAbnormal, abnormalNote: input.note });
+      return { success: true };
+    }),
+
+  // Engine status (for admin dashboard)
+  adminEngineStatus: adminProcedure.query(() => {
+    return getCopyEngineStatus();
+  }),
+
+  // Reload a specific signal source in the engine
+  adminReloadEngine: adminProcedure
+    .input(z.object({ sourceId: z.number() }))
+    .mutation(async ({ input }) => {
+      await reloadSignalSource(input.sourceId);
       return { success: true };
     }),
 

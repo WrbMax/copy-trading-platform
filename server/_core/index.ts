@@ -8,6 +8,7 @@ import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { startAutoScan } from "../bsc-wallet";
+import { startCopyEngine } from "../copy-engine";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -62,6 +63,8 @@ async function startServer() {
     console.log(`Server running on http://localhost:${port}/`);
     // Start automatic BSC deposit scanning
     startAutoScan();
+    // Start copy trading engine (OKX WebSocket)
+    startCopyEngine().catch((err: Error) => console.error("[CopyEngine] Failed to start:", err.message));
   });
 }
 

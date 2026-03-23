@@ -185,7 +185,7 @@ export async function getExchangeApiById(id: number) {
 
 export async function createExchangeApi(data: {
   userId: number;
-  exchange: "binance" | "okx";
+  exchange: "binance" | "okx" | "bybit" | "bitget" | "gate";
   label?: string;
   apiKeyEncrypted: string;
   secretKeyEncrypted: string;

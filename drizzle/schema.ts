@@ -56,7 +56,7 @@ export const emailVerificationCodes = mysqlTable("email_verification_codes", {
 export const exchangeApis = mysqlTable("exchange_apis", {
   id: int("id").autoincrement().primaryKey(),
   userId: int("userId").notNull(),
-  exchange: mysqlEnum("exchange", ["binance", "okx"]).notNull(),
+  exchange: mysqlEnum("exchange", ["binance", "okx", "bybit", "bitget", "gate"]).notNull(),
   label: varchar("label", { length: 64 }),
   // Encrypted storage
   apiKeyEncrypted: text("apiKeyEncrypted").notNull(),
@@ -86,6 +86,8 @@ export const signalSources = mysqlTable("signal_sources", {
   apiKeyEncrypted: text("apiKeyEncrypted"),
   apiSecretEncrypted: text("apiSecretEncrypted"),
   webhookSecret: text("webhookSecret"),
+  exchange: varchar("exchange", { length: 20 }).default("okx").notNull(),
+  passphraseEncrypted: text("passphraseEncrypted"),
   isActive: boolean("isActive").default(true).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
@@ -125,7 +127,7 @@ export const copyOrders = mysqlTable("copy_orders", {
   signalLogId: int("signalLogId").notNull(),
   signalSourceId: int("signalSourceId").notNull(),
   exchangeApiId: int("exchangeApiId").notNull(),
-  exchange: mysqlEnum("exchange", ["binance", "okx"]).notNull(),
+  exchange: mysqlEnum("exchange", ["binance", "okx", "bybit", "bitget", "gate"]).notNull(),
   symbol: varchar("symbol", { length: 20 }).notNull(),
   action: mysqlEnum("action", ["open_long", "open_short", "close_long", "close_short", "close_all"]).notNull(),
   multiplier: decimal("multiplier", { precision: 10, scale: 2 }).notNull(),

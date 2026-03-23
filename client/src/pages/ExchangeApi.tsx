@@ -4,7 +4,7 @@ import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
@@ -12,15 +12,27 @@ import { Switch } from "@/components/ui/switch";
 import { Plus, Trash2, TestTube, Shield, AlertCircle, CheckCircle, Clock } from "lucide-react";
 import { toast } from "sonner";
 
+type ExchangeType = "binance" | "okx" | "bybit" | "bitget" | "gate";
+
+const EXCHANGES: { value: ExchangeType; label: string; abbr: string; needsPassphrase: boolean }[] = [
+  { value: "binance", label: "币安 (Binance)", abbr: "BN", needsPassphrase: false },
+  { value: "okx",     label: "OKX",            abbr: "OKX", needsPassphrase: true },
+  { value: "bybit",   label: "Bybit",           abbr: "BB", needsPassphrase: false },
+  { value: "bitget",  label: "Bitget",          abbr: "BG", needsPassphrase: true },
+  { value: "gate",    label: "Gate.io",         abbr: "GT", needsPassphrase: false },
+];
+
 export default function ExchangeApi() {
   const utils = trpc.useUtils();
   const { data: apis, isLoading } = trpc.exchange.list.useQuery();
   const [open, setOpen] = useState(false);
-  const [exchange, setExchange] = useState<"binance" | "okx">("binance");
+  const [exchange, setExchange] = useState<ExchangeType>("binance");
   const [label, setLabel] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [secretKey, setSecretKey] = useState("");
   const [passphrase, setPassphrase] = useState("");
+
+  const selectedExchange = EXCHANGES.find((e) => e.value === exchange)!;
 
   const bindMutation = trpc.exchange.bind.useMutation({
     onSuccess: () => {
@@ -47,6 +59,8 @@ export default function ExchangeApi() {
     onError: (e) => toast.error(e.message),
   });
 
+  const getExchangeInfo = (ex: string) => EXCHANGES.find((e) => e.value === ex) ?? { abbr: ex.toUpperCase(), label: ex };
+
   return (
     <UserLayout>
       <div className="space-y-6 max-w-3xl">
@@ -68,11 +82,12 @@ export default function ExchangeApi() {
                 </div>
                 <div className="space-y-2">
                   <Label>交易所</Label>
-                  <Select value={exchange} onValueChange={(v) => setExchange(v as any)}>
+                  <Select value={exchange} onValueChange={(v) => { setExchange(v as ExchangeType); setPassphrase(""); }}>
                     <SelectTrigger className="bg-input border-border"><SelectValue /></SelectTrigger>
                     <SelectContent className="bg-card border-border">
-                      <SelectItem value="binance">币安 (Binance)</SelectItem>
-                      <SelectItem value="okx">OKX</SelectItem>
+                      {EXCHANGES.map((ex) => (
+                        <SelectItem key={ex.value} value={ex.value}>{ex.label}</SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
@@ -88,13 +103,17 @@ export default function ExchangeApi() {
                   <Label>Secret Key</Label>
                   <Input type="password" placeholder="请输入Secret Key" value={secretKey} onChange={(e) => setSecretKey(e.target.value)} className="bg-input border-border" />
                 </div>
-                {exchange === "okx" && (
+                {selectedExchange.needsPassphrase && (
                   <div className="space-y-2">
-                    <Label>Passphrase（OKX必填）</Label>
+                    <Label>Passphrase（{selectedExchange.label}必填）</Label>
                     <Input type="password" placeholder="请输入Passphrase" value={passphrase} onChange={(e) => setPassphrase(e.target.value)} className="bg-input border-border" />
                   </div>
                 )}
-                <Button className="w-full" onClick={() => bindMutation.mutate({ exchange, label, apiKey, secretKey, passphrase: passphrase || undefined })} disabled={bindMutation.isPending || !apiKey || !secretKey}>
+                <Button
+                  className="w-full"
+                  onClick={() => bindMutation.mutate({ exchange, label, apiKey, secretKey, passphrase: passphrase || undefined })}
+                  disabled={bindMutation.isPending || !apiKey || !secretKey || (selectedExchange.needsPassphrase && !passphrase)}
+                >
                   {bindMutation.isPending ? "绑定中..." : "确认绑定"}
                 </Button>
               </div>
@@ -114,43 +133,46 @@ export default function ExchangeApi() {
           </Card>
         ) : (
           <div className="space-y-3">
-            {apis.map((api) => (
-              <Card key={api.id} className="bg-card border-border">
-                <CardContent className="p-5">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-lg bg-primary/15 flex items-center justify-center text-primary font-bold text-sm">
-                        {api.exchange === "binance" ? "BN" : "OKX"}
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <p className="font-medium text-foreground">{api.label || (api.exchange === "binance" ? "币安" : "OKX")}</p>
-                          <Badge variant="outline" className="text-xs">{api.exchange}</Badge>
-                          {api.isVerified ? (
-                            <Badge className="text-xs bg-profit text-foreground border-0"><CheckCircle className="w-3 h-3 mr-1" />已验证</Badge>
-                          ) : api.testStatus === "failed" ? (
-                            <Badge variant="destructive" className="text-xs"><AlertCircle className="w-3 h-3 mr-1" />验证失败</Badge>
-                          ) : (
-                            <Badge variant="secondary" className="text-xs"><Clock className="w-3 h-3 mr-1" />未验证</Badge>
-                          )}
+            {apis.map((api) => {
+              const exInfo = getExchangeInfo(api.exchange);
+              return (
+                <Card key={api.id} className="bg-card border-border">
+                  <CardContent className="p-5">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-lg bg-primary/15 flex items-center justify-center text-primary font-bold text-sm">
+                          {exInfo.abbr}
                         </div>
-                        <p className="text-xs text-muted-foreground mt-0.5">API Key: {api.apiKeyEncrypted}</p>
-                        {api.testMessage && <p className="text-xs text-muted-foreground mt-0.5">{api.testMessage}</p>}
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <p className="font-medium text-foreground">{api.label || exInfo.label}</p>
+                            <Badge variant="outline" className="text-xs">{api.exchange}</Badge>
+                            {api.isVerified ? (
+                              <Badge className="text-xs bg-profit text-foreground border-0"><CheckCircle className="w-3 h-3 mr-1" />已验证</Badge>
+                            ) : api.testStatus === "failed" ? (
+                              <Badge variant="destructive" className="text-xs"><AlertCircle className="w-3 h-3 mr-1" />验证失败</Badge>
+                            ) : (
+                              <Badge variant="secondary" className="text-xs"><Clock className="w-3 h-3 mr-1" />未验证</Badge>
+                            )}
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-0.5">API Key: {api.apiKeyEncrypted}</p>
+                          {api.testMessage && <p className="text-xs text-muted-foreground mt-0.5">{api.testMessage}</p>}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Switch checked={api.isActive} onCheckedChange={(v) => toggleMutation.mutate({ id: api.id, isActive: v })} />
+                        <Button size="sm" variant="outline" className="bg-transparent text-xs" onClick={() => testMutation.mutate({ id: api.id })} disabled={testMutation.isPending}>
+                          <TestTube className="w-3.5 h-3.5 mr-1" />测试
+                        </Button>
+                        <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => { if (confirm("确认删除此API？")) deleteMutation.mutate({ id: api.id }); }}>
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <Switch checked={api.isActive} onCheckedChange={(v) => toggleMutation.mutate({ id: api.id, isActive: v })} />
-                      <Button size="sm" variant="outline" className="bg-transparent text-xs" onClick={() => testMutation.mutate({ id: api.id })} disabled={testMutation.isPending}>
-                        <TestTube className="w-3.5 h-3.5 mr-1" />测试
-                      </Button>
-                      <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => { if (confirm("确认删除此API？")) deleteMutation.mutate({ id: api.id }); }}>
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
+                  </CardContent>
+                </Card>
+              );
+            })}
           </div>
         )}
 
@@ -161,6 +183,7 @@ export default function ExchangeApi() {
               <li>• API密钥使用AES-256-GCM算法加密存储，密钥不会明文展示</li>
               <li>• 建议为策略专用创建子账户API，仅开启合约交易权限</li>
               <li>• 严禁开启提现权限，平台不会主动发起提现操作</li>
+              <li>• OKX / Bitget 需额外填写 Passphrase（API口令）</li>
               <li>• 如发现异常，请立即在交易所删除对应API密钥</li>
             </ul>
           </CardContent>

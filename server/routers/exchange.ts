@@ -24,7 +24,7 @@ export const exchangeRouter = router({
 
   bind: protectedProcedure
     .input(z.object({
-      exchange: z.enum(["binance", "okx"]),
+      exchange: z.enum(["binance", "okx", "bybit", "bitget", "gate"]),
       label: z.string().optional(),
       apiKey: z.string().min(1),
       secretKey: z.string().min(1),

@@ -1,0 +1,187 @@
+/**
+ * OKX REST API Client
+ * Handles authentication, order placement, position queries for copy trading.
+ */
+import crypto from "crypto";
+import https from "https";
+
+export interface OkxCredentials {
+  apiKey: string;
+  secretKey: string;
+  passphrase: string;
+}
+
+export interface OkxPosition {
+  instId: string;       // e.g. "ETH-USDT-SWAP"
+  posSide: "long" | "short" | "net";
+  pos: string;          // number of contracts
+  avgPx: string;        // average open price
+  upl: string;          // unrealized PnL
+  lever: string;        // leverage
+  margin: string;
+  instType: string;
+}
+
+export interface OkxOrderResult {
+  ordId: string;
+  clOrdId: string;
+  sCode: string;
+  sMsg: string;
+}
+
+function sign(secretKey: string, timestamp: string, method: string, requestPath: string, body = ""): string {
+  const message = timestamp + method.toUpperCase() + requestPath + body;
+  return crypto.createHmac("sha256", secretKey).update(message).digest("base64");
+}
+
+function getTimestamp(): string {
+  return new Date().toISOString().replace(/\.\d{3}Z$/, ".000Z");
+}
+
+async function okxRequest<T>(
+  creds: OkxCredentials,
+  method: "GET" | "POST",
+  path: string,
+  body?: object
+): Promise<{ code: string; msg: string; data: T }> {
+  const ts = getTimestamp();
+  const bodyStr = body ? JSON.stringify(body) : "";
+  const sig = sign(creds.secretKey, ts, method, path, bodyStr);
+
+  const headers: Record<string, string> = {
+    "OK-ACCESS-KEY": creds.apiKey,
+    "OK-ACCESS-SIGN": sig,
+    "OK-ACCESS-TIMESTAMP": ts,
+    "OK-ACCESS-PASSPHRASE": creds.passphrase,
+    "Content-Type": "application/json",
+  };
+
+  return new Promise((resolve, reject) => {
+    const options = {
+      hostname: "www.okx.com",
+      path,
+      method,
+      headers,
+    };
+
+    const req = https.request(options, (res) => {
+      let data = "";
+      res.on("data", (chunk) => (data += chunk));
+      res.on("end", () => {
+        try {
+          resolve(JSON.parse(data));
+        } catch {
+          reject(new Error(`Invalid JSON: ${data.slice(0, 200)}`));
+        }
+      });
+    });
+
+    req.on("error", reject);
+    if (bodyStr) req.write(bodyStr);
+    req.end();
+  });
+}
+
+/** Get all open positions for the account */
+export async function getPositions(creds: OkxCredentials, instId?: string): Promise<OkxPosition[]> {
+  const path = instId
+    ? `/api/v5/account/positions?instType=SWAP&instId=${instId}`
+    : "/api/v5/account/positions?instType=SWAP";
+  const res = await okxRequest<OkxPosition[]>(creds, "GET", path);
+  if (res.code !== "0") throw new Error(`OKX getPositions error: ${res.code} ${res.msg}`);
+  return res.data || [];
+}
+
+/** Get account balance */
+export async function getBalance(creds: OkxCredentials): Promise<{ totalEq: string; availBal: string }> {
+  const res = await okxRequest<any[]>(creds, "GET", "/api/v5/account/balance");
+  if (res.code !== "0") throw new Error(`OKX getBalance error: ${res.code} ${res.msg}`);
+  const detail = res.data?.[0] || {};
+  const usdtDetail = (detail.details || []).find((d: any) => d.ccy === "USDT") || {};
+  return {
+    totalEq: detail.totalEq || "0",
+    availBal: usdtDetail.availBal || "0",
+  };
+}
+
+/**
+ * Place a futures order
+ * @param side  "buy" | "sell"
+ * @param posSide "long" | "short"  (for hedge mode)
+ * @param sz    number of contracts (integer string)
+ * @param ordType "market" | "limit"
+ * @param px    price (only for limit orders)
+ */
+export async function placeOrder(
+  creds: OkxCredentials,
+  instId: string,
+  side: "buy" | "sell",
+  posSide: "long" | "short",
+  sz: string,
+  ordType: "market" | "limit" = "market",
+  px?: string
+): Promise<OkxOrderResult> {
+  const body: Record<string, string> = {
+    instId,
+    tdMode: "cross",   // cross margin
+    side,
+    posSide,
+    ordType,
+    sz,
+  };
+  if (ordType === "limit" && px) body.px = px;
+
+  const res = await okxRequest<OkxOrderResult[]>(creds, "POST", "/api/v5/trade/order", body);
+  if (res.code !== "0") throw new Error(`OKX placeOrder error: ${res.code} ${res.msg}`);
+  const result = res.data?.[0];
+  if (!result) throw new Error("OKX placeOrder: no result returned");
+  if (result.sCode !== "0") throw new Error(`OKX placeOrder rejected: ${result.sCode} ${result.sMsg}`);
+  return result;
+}
+
+/**
+ * Close a position fully (market order)
+ * For long position: sell; for short position: buy
+ */
+export async function closePosition(
+  creds: OkxCredentials,
+  instId: string,
+  posSide: "long" | "short",
+  sz: string
+): Promise<OkxOrderResult> {
+  const side = posSide === "long" ? "sell" : "buy";
+  return placeOrder(creds, instId, side, posSide, sz, "market");
+}
+
+/**
+ * Get instrument info (lot size, min size etc.)
+ */
+export async function getInstrument(instId: string): Promise<{ ctVal: string; minSz: string; lotSz: string } | null> {
+  return new Promise((resolve) => {
+    const path = `/api/v5/public/instruments?instType=SWAP&instId=${instId}`;
+    https.get(`https://www.okx.com${path}`, (res) => {
+      let data = "";
+      res.on("data", (c) => (data += c));
+      res.on("end", () => {
+        try {
+          const json = JSON.parse(data);
+          const inst = json.data?.[0];
+          if (!inst) return resolve(null);
+          resolve({ ctVal: inst.ctVal, minSz: inst.minSz, lotSz: inst.lotSz });
+        } catch {
+          resolve(null);
+        }
+      });
+    }).on("error", () => resolve(null));
+  });
+}
+
+/**
+ * Calculate number of contracts from USDT amount
+ * ctVal = contract value in base currency (e.g. 0.01 ETH per contract)
+ * sz = floor(usdtAmount / (price * ctVal))
+ */
+export function calcContractSize(usdtAmount: number, price: number, ctVal: number, minSz = 1): number {
+  const sz = Math.floor(usdtAmount / (price * ctVal));
+  return Math.max(sz, minSz);
+}

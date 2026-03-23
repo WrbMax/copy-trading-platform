@@ -1,0 +1,9 @@
+{
+  "query": "\nALTER TABLE exchange_apis MODIFY COLUMN exchange ENUM('binance', 'okx', 'bybit', 'bitget', 'gate') NOT NULL;\nALTER TABLE copy_orders MODIFY COLUMN exchange ENUM('binance', 'okx', 'bybit', 'bitget', 'gate') NOT NULL;\n",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 2yRRhmQmjmz9LMP.root --database 3xjoeN6gTpdmQoJAnkq7pe --execute \nALTER TABLE exchange_apis MODIFY COLUMN exchange ENUM('binance', 'okx', 'bybit', 'bitget', 'gate') NOT NULL;\nALTER TABLE copy_orders MODIFY COLUMN exchange ENUM('binance', 'okx', 'bybit', 'bitget', 'gate') NOT NULL;\n",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 2074
+}
