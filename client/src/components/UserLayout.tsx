@@ -47,7 +47,7 @@ export default function UserLayout({ children }: { children: React.ReactNode }) 
   const [location] = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const logoutMutation = trpc.auth.logout.useMutation({
-    onSuccess: () => { logout(); window.location.href = "/copy/login"; },
+    onSuccess: () => { logout(); window.location.href = "/login"; },
   });
 
   if (loading) {
@@ -59,7 +59,7 @@ export default function UserLayout({ children }: { children: React.ReactNode }) 
   }
 
   if (!isAuthenticated) {
-    window.location.href = "/copy/login";
+    window.location.href = "/login";
     return null;
   }
 
