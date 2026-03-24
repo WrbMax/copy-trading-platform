@@ -55,11 +55,11 @@ export const userRouter = router({
       const invitee = await getUserById(input.inviteeId);
       if (!invitee) throw new TRPCError({ code: "NOT_FOUND", message: "用户不存在" });
       if (invitee.referrerId !== ctx.user.id) throw new TRPCError({ code: "FORBIDDEN", message: "您只能给自己邀请的人设置分成比例" });
-      // User's own ratio is the upper limit
+      // Invitee's ratio must be >= user's own ratio (higher ratio = more deducted from invitee, difference goes to referrer)
       const currentUser = await getUserById(ctx.user.id);
       const myRatio = parseFloat(currentUser?.revenueShareRatio || "0");
-      if (input.ratio > myRatio) {
-        throw new TRPCError({ code: "BAD_REQUEST", message: `分成比例不能超过您自己的比例 (${myRatio}%)` });
+      if (input.ratio < myRatio) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: `下级分成比例不能低于您自己的比例 (${myRatio}%)` });
       }
       await updateUser(input.inviteeId, { revenueShareRatio: input.ratio.toFixed(2) });
       return { success: true };
