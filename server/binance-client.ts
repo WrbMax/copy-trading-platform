@@ -43,7 +43,11 @@ async function binanceRequest<T>(
     body: method === "POST" ? fullQuery : undefined,
   });
 
-  const data = (await res.json()) as T & { code?: number; msg?: string };
+  // Use text() + regex to preserve big integer orderId precision (JS Number loses precision for > 2^53)
+  const text = await res.text();
+  // Convert large numeric orderId values to strings before JSON.parse
+  const safeText = text.replace(/"orderId"\s*:\s*(\d{15,})/g, '"orderId":"$1"');
+  const data = JSON.parse(safeText) as T & { code?: number; msg?: string };
   if ((data as { code?: number }).code && (data as { code?: number }).code! < 0) {
     throw new Error(`Binance API error ${(data as { code?: number }).code}: ${(data as { msg?: string }).msg}`);
   }
@@ -63,7 +67,7 @@ export function toBinanceSymbol(instId: string): string {
 }
 
 export interface BinanceOrderResult {
-  orderId: number;
+  orderId: string;
   symbol: string;
   status: string;
   side: string;

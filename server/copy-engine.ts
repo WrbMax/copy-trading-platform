@@ -358,16 +358,16 @@ async function executeCopyTrades(sourceId: number, change: PositionChange) {
       };
       if (change.action === "open_long" || change.action === "add_long") {
         const r = await placeBinanceOrder(binCreds, change.instId, "BUY", "LONG", sz);
-        exchangeOrderId = r.orderId.toString();
+        exchangeOrderId = String(r.orderId);
       } else if (change.action === "open_short" || change.action === "add_short") {
         const r = await placeBinanceOrder(binCreds, change.instId, "SELL", "SHORT", sz);
-        exchangeOrderId = r.orderId.toString();
+        exchangeOrderId = String(r.orderId);
       } else if (change.action === "close_long" || change.action === "reduce_long") {
         const r = await closeBinancePosition(binCreds, change.instId, "LONG", sz);
-        exchangeOrderId = r.orderId.toString();
+        exchangeOrderId = String(r.orderId);
       } else if (change.action === "close_short" || change.action === "reduce_short") {
         const r = await closeBinancePosition(binCreds, change.instId, "SHORT", sz);
-        exchangeOrderId = r.orderId.toString();
+        exchangeOrderId = String(r.orderId);
       }
     } else if (userExchange === "bybit") {
       const bybitCreds: BybitCredentials = {
