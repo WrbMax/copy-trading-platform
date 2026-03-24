@@ -106,6 +106,7 @@ export default function Orders() {
                       <th className="text-right px-4 py-3 text-muted-foreground font-medium text-xs">开仓价</th>
                       <th className="text-right px-4 py-3 text-muted-foreground font-medium text-xs">平仓价</th>
                       <th className="text-right px-4 py-3 text-muted-foreground font-medium text-xs">手续费</th>
+                      <th className="text-right px-4 py-3 text-muted-foreground font-medium text-xs">扣除分成</th>
                       <th className="text-right px-4 py-3 text-muted-foreground font-medium text-xs">净盈亏</th>
                       <th className="text-center px-4 py-3 text-muted-foreground font-medium text-xs">状态</th>
                       <th className="text-right px-4 py-3 text-muted-foreground font-medium text-xs">开仓时间</th>
@@ -149,6 +150,9 @@ export default function Orders() {
                           </td>
                           <td className="px-4 py-3 text-right font-mono text-xs text-muted-foreground">
                             {order.fee ? parseFloat(order.fee).toFixed(4) : "-"}
+                          </td>
+                          <td className="px-4 py-3 text-right font-mono text-xs text-loss">
+                            {order.revenueShareDeducted && parseFloat(order.revenueShareDeducted) > 0 ? `-${parseFloat(order.revenueShareDeducted).toFixed(4)}` : "-"}
                           </td>
                           <td className="px-4 py-3 text-right">
                             <PnlBadge value={order.netPnl} />

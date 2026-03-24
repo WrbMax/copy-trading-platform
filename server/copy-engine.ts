@@ -26,6 +26,7 @@ import {
   findUserOpenOrder,
   getUserById,
   updateUser,
+  disableAllUserStrategies,
 } from "./db";
 import { decrypt } from "./crypto";
 import {
@@ -284,6 +285,17 @@ async function executeCopyTrades(sourceId: number, change: PositionChange) {
 
     const userExchange = (api.exchange || "okx").toLowerCase();
     const multiplier = parseFloat(us.multiplier);
+
+    // ── Balance check: skip and pause strategy if user balance is 0 on open actions ──
+    const isOpenAction = ["open_long", "open_short", "add_long", "add_short"].includes(change.action);
+    if (isOpenAction) {
+      const user = await getUserById(us.userId);
+      if (user && parseFloat(user.balance as string) <= 0) {
+        console.log(`[CopyEngine] ⚠️ User ${us.userId} balance is 0, pausing all strategies`);
+        await disableAllUserStrategies(us.userId);
+        return false;
+      }
+    }
 
     // Calculate order size based on exchange type
     let sz: string;

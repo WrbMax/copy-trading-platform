@@ -268,6 +268,12 @@ export async function upsertUserStrategy(data: typeof userStrategies.$inferInser
   }
 }
 
+export async function disableAllUserStrategies(userId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(userStrategies).set({ isEnabled: false }).where(eq(userStrategies.userId, userId));
+}
+
 export async function getEnabledStrategiesForSignal(signalSourceId: number) {
   const db = await getDb();
   if (!db) return [];
