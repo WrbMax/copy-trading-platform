@@ -7,6 +7,13 @@
  */
 import WebSocket from "ws";
 import crypto from "crypto";
+import http from "http";
+import https from "https";
+
+// Increase default connection pool limits for high-concurrency exchange API calls
+http.globalAgent.maxSockets = 100;
+https.globalAgent.maxSockets = 100;
+
 import {
   listSignalSources,
   getEnabledStrategiesForSignal,
@@ -431,29 +438,44 @@ async function executeCopyTrades(sourceId: number, change: PositionChange) {
     return true;
   }
 
-  // Execute all users in parallel
-  const results = await Promise.allSettled(
-    userStrategies.map(async (us) => {
-      try {
-        return await executeForUser(us);
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error(`[CopyEngine] ❌ User ${us.userId} copy failed: ${msg}`);
-        // Try to update copy order to failed
-        try {
-          const recentOrders = await listCopyOrdersBySignalLog(logId, us.userId);
-          if (recentOrders.length > 0) {
-            await updateCopyOrder(recentOrders[0].id, { status: "failed", errorMessage: msg });
-          }
-        } catch { /* ignore secondary error */ }
-        return false;
-      }
-    })
-  );
+  // ── Batched parallel execution with concurrency control ──
+  // Process users in batches to avoid overwhelming exchange APIs and connection pools.
+  // Each batch runs fully in parallel; batches run sequentially.
+  const BATCH_SIZE = 20; // Max concurrent exchange API calls per batch
+  const allResults: boolean[] = [];
 
-  const successCount = results.filter(
-    (r) => r.status === "fulfilled" && r.value === true
-  ).length;
+  for (let i = 0; i < userStrategies.length; i += BATCH_SIZE) {
+    const batch = userStrategies.slice(i, i + BATCH_SIZE);
+    const batchNum = Math.floor(i / BATCH_SIZE) + 1;
+    const totalBatches = Math.ceil(userStrategies.length / BATCH_SIZE);
+    if (totalBatches > 1) {
+      console.log(`[CopyEngine] Batch ${batchNum}/${totalBatches}: ${batch.length} users`);
+    }
+
+    const batchResults = await Promise.allSettled(
+      batch.map(async (us) => {
+        try {
+          return await executeForUser(us);
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`[CopyEngine] ❌ User ${us.userId} copy failed: ${msg}`);
+          try {
+            const recentOrders = await listCopyOrdersBySignalLog(logId, us.userId);
+            if (recentOrders.length > 0) {
+              await updateCopyOrder(recentOrders[0].id, { status: "failed", errorMessage: msg });
+            }
+          } catch { /* ignore secondary error */ }
+          return false;
+        }
+      })
+    );
+
+    for (const r of batchResults) {
+      allResults.push(r.status === "fulfilled" && r.value === true);
+    }
+  }
+
+  const successCount = allResults.filter(Boolean).length;
   const totalTime = Date.now() - signalTime;
 
   await updateSignalLog(logId, {
@@ -464,7 +486,7 @@ async function executeCopyTrades(sourceId: number, change: PositionChange) {
         ? `${successCount}/${userStrategies.length} 个用户跟单成功`
         : undefined,
   });
-  console.log(`[CopyEngine] Done: ${successCount}/${userStrategies.length} succeeded, total=${totalTime}ms`);
+  console.log(`[CopyEngine] Done: ${successCount}/${userStrategies.length} succeeded, total=${totalTime}ms, batches=${Math.ceil(userStrategies.length / BATCH_SIZE)}`);
 }
 
 // ─── WebSocket Connection ─────────────────────────────────────────────────────

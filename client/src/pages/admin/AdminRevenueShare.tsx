@@ -41,7 +41,7 @@ export default function AdminRevenueShare() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border">
-                    {["用户ID", "用户名", "当前分成比例", "上级ID", "操作"].map((h) => (
+                    {["用户ID", "用户名", "当前分成比例", "推荐人ID", "操作"].map((h) => (
                       <th key={h} className="text-left px-4 py-3 text-muted-foreground font-medium">{h}</th>
                     ))}
                   </tr>

@@ -13,9 +13,25 @@ export default function Invite() {
   const basePath = import.meta.env.BASE_URL?.replace(/\/$/, '') || '';
   const inviteUrl = `${window.location.origin}${basePath}/register?ref=${inviteCode}`;
 
-  const copy = (text: string, label: string) => {
-    navigator.clipboard.writeText(text);
-    toast.success(`${label}已复制`);
+  const copy = async (text: string, label: string) => {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        // Fallback for non-HTTPS or older browsers
+        const textarea = document.createElement("textarea");
+        textarea.value = text;
+        textarea.style.position = "fixed";
+        textarea.style.left = "-9999px";
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textarea);
+      }
+      toast.success(`${label}已复制`);
+    } catch {
+      toast.error("复制失败，请手动复制");
+    }
   };
 
   return (
@@ -23,7 +39,7 @@ export default function Invite() {
       <div className="space-y-6 max-w-2xl">
         <div>
           <h1 className="text-2xl font-bold">邀请好友</h1>
-          <p className="text-muted-foreground text-sm mt-1">邀请好友加入，获得多级收益分成</p>
+          <p className="text-muted-foreground text-sm mt-1">邀请好友加入平台，共享策略收益</p>
         </div>
 
         <Card className="bg-card border-border">
@@ -34,7 +50,7 @@ export default function Invite() {
               </div>
               <div>
                 <p className="font-semibold text-foreground">我的邀请码</p>
-                <p className="text-xs text-muted-foreground">分享给好友，绑定上下级关系</p>
+                <p className="text-xs text-muted-foreground">分享给好友，一起使用策略平台</p>
               </div>
             </div>
             <div className="p-4 rounded-xl bg-secondary/50 border border-border">
@@ -54,7 +70,7 @@ export default function Invite() {
         <div className="grid grid-cols-2 gap-4">
           <Card className="bg-card border-border">
             <CardContent className="p-5">
-              <p className="text-sm text-muted-foreground">直属下级</p>
+              <p className="text-sm text-muted-foreground">直推人数</p>
               <p className="text-2xl font-bold text-foreground mt-1">{teamStats?.directCount ?? 0} <span className="text-sm font-normal text-muted-foreground">人</span></p>
             </CardContent>
           </Card>
@@ -67,12 +83,12 @@ export default function Invite() {
         </div>
 
         <Card className="bg-card border-border">
-          <CardHeader className="pb-3"><CardTitle className="text-base">邀请奖励说明</CardTitle></CardHeader>
+          <CardHeader className="pb-3"><CardTitle className="text-base">邀请说明</CardTitle></CardHeader>
           <CardContent className="space-y-3 text-sm text-muted-foreground">
-            <p>邀请好友加入后，您将成为其上级，享受多级收益分成：</p>
+            <p>邀请好友加入平台，一起使用策略跟单服务：</p>
             <ul className="space-y-2">
-              <li className="flex items-start gap-2"><span className="text-primary mt-0.5">•</span>当您的下级产生盈利订单时，系统将按差额分账方式向您分配收益</li>
-              <li className="flex items-start gap-2"><span className="text-primary mt-0.5">•</span>分成比例由管理员根据您的级别设置，层级越深差额越小</li>
+              <li className="flex items-start gap-2"><span className="text-primary mt-0.5">•</span>好友通过您的邀请码或链接注册后，自动加入您的团队</li>
+              <li className="flex items-start gap-2"><span className="text-primary mt-0.5">•</span>团队成员产生的交易收益将按平台规则进行分成</li>
               <li className="flex items-start gap-2"><span className="text-primary mt-0.5">•</span>收益分成实时结算，直接入账到您的平台余额</li>
             </ul>
             <div className="p-3 rounded-lg bg-primary/10 border border-primary/20 text-primary text-xs">

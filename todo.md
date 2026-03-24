@@ -113,3 +113,9 @@
 - [x] 跟单引擎：公共API结果缓存（getInstrument、getBinanceInstrument等）
 - [x] 跟单引擎：Binance isHedgeMode和setLeverage缓存避免重复调用
 - [x] 修复Bitget平仓tradeSide硬编码为open的bug
+- [x] 跟单引擎：分批并发控制（每批20用户并行，防止100+用户同时请求导致连接池/限流问题）
+- [x] 跟单引擎：HTTP连接池扩容（maxSockets=100）
+- [x] 跟单引擎：增加并发度和延迟日志监控（每批次日志+总耗时）
+- [x] 删除“多级收益分成说明”整个区块
+- [x] 清理涉及上下级关系绑定的词语
+- [x] 修复邀请界面复制链接按钮无反应（添加fallback复制方法）
