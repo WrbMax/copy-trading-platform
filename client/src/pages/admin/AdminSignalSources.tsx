@@ -36,11 +36,21 @@ const ACTION_LABELS: Record<string, string> = {
   open_long: "开多", open_short: "开空", close_long: "平多", close_short: "平空", close_all: "全平",
 };
 
+// Signal log status: 'completed' = signal received & processed (regardless of user results)
+// 'failed' = signal itself failed to process
 const STATUS_CONFIG: Record<string, { label: string; icon: React.ReactNode; variant: "default" | "secondary" | "destructive" | "outline" }> = {
-  completed: { label: "已完成", icon: <CheckCircle2 className="w-3 h-3" />, variant: "default" },
-  failed: { label: "失败", icon: <XCircle className="w-3 h-3" />, variant: "destructive" },
+  completed: { label: "已接收", icon: <CheckCircle2 className="w-3 h-3" />, variant: "default" },
+  failed: { label: "接收失败", icon: <XCircle className="w-3 h-3" />, variant: "destructive" },
   processing: { label: "处理中", icon: <Loader2 className="w-3 h-3 animate-spin" />, variant: "secondary" },
   pending: { label: "待处理", icon: <AlertCircle className="w-3 h-3" />, variant: "outline" },
+};
+
+const ORDER_STATUS_CONFIG: Record<string, { label: string; color: string }> = {
+  open: { label: "跟单成功", color: "text-profit" },
+  closed: { label: "已平仓", color: "text-muted-foreground" },
+  failed: { label: "跟单失败", color: "text-loss" },
+  pending: { label: "待执行", color: "text-yellow-500" },
+  cancelled: { label: "已取消", color: "text-muted-foreground" },
 };
 
 function formatDateTime(d: Date | string | null) {
@@ -284,22 +294,45 @@ export default function AdminSignalSources() {
                           </div>
                         </div>
 
-                        {/* Error message */}
-                        {log.errorMessage && (
-                          <div className="flex items-start gap-2 p-2 rounded bg-destructive/10 text-xs text-destructive">
-                            <XCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                            <span>{log.errorMessage}</span>
+                        {/* Copy orders (user execution results) */}
+                        {log.copyOrders && log.copyOrders.length > 0 ? (
+                          <div className="space-y-1.5">
+                            <p className="text-xs text-muted-foreground font-medium">跟单明细（{log.copyOrders.length} 个用户）</p>
+                            {log.copyOrders.map((order: any) => {
+                              const os = ORDER_STATUS_CONFIG[order.status] ?? { label: order.status, color: "text-muted-foreground" };
+                              return (
+                                <div key={order.id} className="flex items-start justify-between p-2 rounded bg-background/50 text-xs">
+                                  <div className="space-y-0.5">
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-mono text-muted-foreground">UID:{order.userId}</span>
+                                      <span className="font-medium">{order.exchange?.toUpperCase()}</span>
+                                      <span className="text-muted-foreground">倍数:{parseFloat(order.multiplier).toFixed(1)}x</span>
+                                    </div>
+                                    {order.errorMessage && (
+                                      <p className="text-loss text-xs">{order.errorMessage}</p>
+                                    )}
+                                    {order.exchangeOrderId && (
+                                      <p className="text-muted-foreground font-mono">OrderID: {order.exchangeOrderId}</p>
+                                    )}
+                                  </div>
+                                  <div className="text-right shrink-0 ml-2">
+                                    <span className={`font-semibold ${os.color}`}>{os.label}</span>
+                                    <p className="text-muted-foreground mt-0.5">数量: {parseFloat(order.actualQuantity).toFixed(4)}</p>
+                                  </div>
+                                </div>
+                              );
+                            })}
                           </div>
+                        ) : (
+                          <p className="text-xs text-muted-foreground">当前无订阅用户</p>
                         )}
 
-                        {/* Raw payload toggle */}
-                        {log.rawPayload && (
-                          <details className="text-xs">
-                            <summary className="cursor-pointer text-muted-foreground hover:text-foreground select-none">查看原始数据</summary>
-                            <pre className="mt-2 p-2 rounded bg-background/80 overflow-x-auto text-xs font-mono text-muted-foreground whitespace-pre-wrap break-all">
-                              {(() => { try { return JSON.stringify(JSON.parse(log.rawPayload), null, 2); } catch { return log.rawPayload; } })()}
-                            </pre>
-                          </details>
+                        {/* Summary note (partial success etc) */}
+                        {log.errorMessage && (
+                          <div className="flex items-start gap-2 p-2 rounded bg-secondary/50 text-xs text-muted-foreground">
+                            <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                            <span>{log.errorMessage}</span>
+                          </div>
                         )}
                       </div>
                     );

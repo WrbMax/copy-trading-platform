@@ -81,6 +81,8 @@ export async function placeBitgetOrder(
   quantity: string
 ): Promise<BitgetOrderResult> {
   const symbol = toBitgetSymbol(instId);
+  // tradeSide must match: "open" for opening, "close" for closing
+  const tradeSide = side.startsWith("close") ? "close" : "open";
   return bitgetRequest<BitgetOrderResult>(creds, "POST", "/api/v2/mix/order/place-order", {
     symbol,
     productType: "USDT-FUTURES",
@@ -89,7 +91,7 @@ export async function placeBitgetOrder(
     size: quantity,
     side,
     orderType: "market",
-    tradeSide: "open",
+    tradeSide,
   });
 }
 

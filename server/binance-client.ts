@@ -73,41 +73,100 @@ export interface BinanceOrderResult {
 }
 
 /**
- * Set position mode to Hedge mode (required for long/short positions).
- * Silently ignores "already in this mode" error.
+ * Check if the Binance account is in hedge (dual-side) position mode.
+ * Returns true if hedge mode, false if one-way mode.
  */
-export async function ensureHedgeMode(creds: BinanceCredentials): Promise<void> {
+// Cache hedge mode per API key for 2 minutes
+const hedgeModeCache = new Map<string, { value: boolean; expiry: number }>();
+
+export async function isHedgeMode(creds: BinanceCredentials): Promise<boolean> {
+  const cacheKey = creds.apiKey;
+  const cached = hedgeModeCache.get(cacheKey);
+  if (cached && Date.now() < cached.expiry) return cached.value;
   try {
-    await binanceRequest(creds, "POST", "/fapi/v1/positionSide/dual", { dualSidePosition: true });
+    const data = await binanceRequest<{ dualSidePosition: boolean }>(creds, "GET", "/fapi/v1/positionSide/dual", {});
+    const result = data.dualSidePosition === true;
+    hedgeModeCache.set(cacheKey, { value: result, expiry: Date.now() + 2 * 60 * 1000 });
+    return result;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Set leverage for a specific symbol.
+ * Silently ignores "no need to change" errors.
+ */
+// Cache leverage settings per apiKey+symbol for 5 minutes
+const leverageCache = new Map<string, number>();
+
+export async function setLeverage(creds: BinanceCredentials, symbol: string, leverage: number): Promise<void> {
+  const cacheKey = `${creds.apiKey}_${symbol}_${leverage}`;
+  if (leverageCache.has(cacheKey)) return; // Already set recently
+  try {
+    await binanceRequest(creds, "POST", "/fapi/v1/leverage", { symbol, leverage });
+    console.log(`[Binance] Leverage set to ${leverage}x for ${symbol}`);
+    leverageCache.set(cacheKey, Date.now());
+    // Clean old entries after 5 minutes
+    setTimeout(() => leverageCache.delete(cacheKey), 5 * 60 * 1000);
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
-    // -4059 = No need to change position side
-    if (!msg.includes("-4059") && !msg.includes("4059")) throw e;
+    // -4028 = Leverage not changed (already at target)
+    if (msg.includes("-4028") || msg.includes("4028")) {
+      leverageCache.set(cacheKey, Date.now());
+      setTimeout(() => leverageCache.delete(cacheKey), 5 * 60 * 1000);
+    } else {
+      console.warn(`[Binance] Failed to set leverage: ${msg}`);
+    }
   }
 }
 
 /**
  * Place a Binance futures order.
+ * Automatically detects account position mode (one-way vs hedge) and adapts.
+ * Auto-sets leverage to 20x before placing the order.
  * @param side "BUY" | "SELL"
- * @param positionSide "LONG" | "SHORT"
+ * @param positionSide "LONG" | "SHORT" (used in hedge mode; ignored in one-way mode)
  * @param quantity contract quantity (in base asset, e.g. ETH amount)
+ * @param isClose whether this is a closing order (reduceOnly in one-way mode)
  */
 export async function placeBinanceOrder(
   creds: BinanceCredentials,
   instId: string,
   side: "BUY" | "SELL",
   positionSide: "LONG" | "SHORT",
-  quantity: string
+  quantity: string,
+  isClose = false
 ): Promise<BinanceOrderResult> {
   const symbol = toBinanceSymbol(instId);
-  await ensureHedgeMode(creds);
-  return binanceRequest<BinanceOrderResult>(creds, "POST", "/fapi/v1/order", {
-    symbol,
-    side,
-    positionSide,
-    type: "MARKET",
-    quantity,
-  });
+  const hedgeMode = await isHedgeMode(creds);
+  // Auto-set leverage to 20x before placing order
+  if (!isClose) {
+    await setLeverage(creds, symbol, 20);
+  }
+  console.log(`[Binance] Order: symbol=${symbol}, side=${side}, positionSide=${positionSide}, qty=${quantity}, hedgeMode=${hedgeMode}, isClose=${isClose}`);
+
+  if (hedgeMode) {
+    // Hedge mode: pass positionSide explicitly
+    return binanceRequest<BinanceOrderResult>(creds, "POST", "/fapi/v1/order", {
+      symbol,
+      side,
+      positionSide,
+      type: "MARKET",
+      quantity,
+    });
+  } else {
+    // One-way mode: no positionSide; use reduceOnly for close orders
+    const params: Record<string, string | number | boolean> = {
+      symbol,
+      side,
+      type: "MARKET",
+      quantity,
+    };
+    if (isClose) params.reduceOnly = true;
+    console.log(`[Binance] One-way params:`, JSON.stringify(params));
+    return binanceRequest<BinanceOrderResult>(creds, "POST", "/fapi/v1/order", params);
+  }
 }
 
 /**
@@ -121,7 +180,7 @@ export async function closeBinancePosition(
   quantity: string
 ): Promise<BinanceOrderResult> {
   const side = positionSide === "LONG" ? "SELL" : "BUY";
-  return placeBinanceOrder(creds, instId, side, positionSide, quantity);
+  return placeBinanceOrder(creds, instId, side, positionSide, quantity, true);
 }
 
 /**
@@ -156,10 +215,15 @@ export async function getBinanceBalance(
 
 /**
  * Get Binance futures instrument info (for contract size calculation).
+ * Cached for 5 minutes to avoid repeated API calls.
  */
+const binanceInstrumentCache = new Map<string, { data: { quantityPrecision: number; pricePrecision: number; minQty: string }; expiry: number }>();
+
 export async function getBinanceInstrument(
   symbol: string
 ): Promise<{ quantityPrecision: number; pricePrecision: number; minQty: string } | null> {
+  const cached = binanceInstrumentCache.get(symbol);
+  if (cached && Date.now() < cached.expiry) return cached.data;
   try {
     const data = await fetch(`${BASE_URL}/fapi/v1/exchangeInfo`).then((r) => r.json()) as {
       symbols: Array<{ symbol: string; quantityPrecision: number; pricePrecision: number; filters: Array<{ filterType: string; minQty: string }> }>;
@@ -167,11 +231,13 @@ export async function getBinanceInstrument(
     const info = data.symbols.find((s) => s.symbol === symbol);
     if (!info) return null;
     const lotFilter = info.filters.find((f) => f.filterType === "LOT_SIZE");
-    return {
+    const result = {
       quantityPrecision: info.quantityPrecision,
       pricePrecision: info.pricePrecision,
       minQty: lotFilter?.minQty ?? "0.001",
     };
+    binanceInstrumentCache.set(symbol, { data: result, expiry: Date.now() + 5 * 60 * 1000 });
+    return result;
   } catch {
     return null;
   }

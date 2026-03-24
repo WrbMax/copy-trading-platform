@@ -14,6 +14,7 @@ import {
   getUserStrategies,
   getUserStrategy,
   listCopyOrders,
+  listCopyOrdersBySignalLog,
   listSignalLogs,
   listSignalSources,
   updateCopyOrder,
@@ -189,7 +190,15 @@ export const strategyRouter = router({
   adminSignalLogs: adminProcedure
     .input(z.object({ signalSourceId: z.number().optional(), page: z.number().default(1), limit: z.number().default(20) }))
     .query(async ({ input }) => {
-      return listSignalLogs(input.signalSourceId, input.page, input.limit);
+      const result = await listSignalLogs(input.signalSourceId, input.page, input.limit);
+      // Attach copy orders (user execution results) to each log entry
+      const itemsWithOrders = await Promise.all(
+        result.items.map(async (log) => {
+          const orders = await listCopyOrdersBySignalLog(log.id);
+          return { ...log, copyOrders: orders };
+        })
+      );
+      return { ...result, items: itemsWithOrders };
     }),
 
   adminAllOrders: adminProcedure

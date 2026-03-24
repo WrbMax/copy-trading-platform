@@ -15,6 +15,7 @@ import {
   updateSignalLog,
   createCopyOrder,
   updateCopyOrder,
+  listCopyOrdersBySignalLog,
 } from "./db";
 import { decrypt } from "./crypto";
 import {
@@ -61,10 +62,13 @@ import {
 
 interface PositionSnapshot {
   instId: string;
-  posSide: "long" | "short";
-  pos: number;
+  posSide: "long" | "short" | "net";
+  pos: number;        // positive = long, negative = short in net mode
   avgPx: number;
 }
+
+// Maximum age (in seconds) for a signal to be considered valid for execution
+const SIGNAL_MAX_AGE_SECONDS = 30;
 
 interface SignalSourceState {
   id: number;
@@ -76,6 +80,8 @@ interface SignalSourceState {
   reconnectTimer: NodeJS.Timeout | null;
   pingTimer: NodeJS.Timeout | null;
   isConnected: boolean;
+  /** True until the first position snapshot is received and stored (skip stale signals on startup/reconnect) */
+  initialSync: boolean;
 }
 
 type ChangeAction =
@@ -118,20 +124,60 @@ function detectChanges(
   const seen = new Set<string>();
 
   for (const pos of incoming) {
-    // Skip net mode; only handle hedge mode (long/short)
-    if (pos.posSide !== "long" && pos.posSide !== "short") continue;
-    const posSide = pos.posSide as "long" | "short";
+    const rawPosSide = pos.posSide;
+    const rawQty = parseFloat(pos.pos) || 0;
+    const avgPx = parseFloat(pos.avgPx) || 0;
+
+    if (rawPosSide === "net") {
+      // Net mode: pos > 0 means long, pos < 0 means short, pos == 0 means flat
+      const key = `${pos.instId}_net`;
+      seen.add(key);
+      const prevSnap = prev.get(key);
+      const prevQty = prevSnap?.pos ?? 0; // signed
+
+      if (rawQty === prevQty) continue;
+
+      const prevAbs = Math.abs(prevQty);
+      const newAbs = Math.abs(rawQty);
+      const prevSide: "long" | "short" = prevQty >= 0 ? "long" : "short";
+      const newSide: "long" | "short" = rawQty >= 0 ? "long" : "short";
+
+      if (prevQty === 0 && rawQty > 0) {
+        // Flat → Long
+        changes.push({ action: "open_long", instId: pos.instId, posSide: "long", contractsDelta: newAbs, newPos: newAbs, avgPx });
+      } else if (prevQty === 0 && rawQty < 0) {
+        // Flat → Short
+        changes.push({ action: "open_short", instId: pos.instId, posSide: "short", contractsDelta: newAbs, newPos: newAbs, avgPx });
+      } else if (rawQty === 0) {
+        // Any → Flat (close)
+        changes.push({ action: `close_${prevSide}`, instId: pos.instId, posSide: prevSide, contractsDelta: prevAbs, newPos: 0, avgPx });
+      } else if (prevSide !== newSide) {
+        // Direction flip: close old side, open new side
+        changes.push({ action: `close_${prevSide}`, instId: pos.instId, posSide: prevSide, contractsDelta: prevAbs, newPos: 0, avgPx });
+        changes.push({ action: `open_${newSide}`, instId: pos.instId, posSide: newSide, contractsDelta: newAbs, newPos: newAbs, avgPx });
+      } else if (newAbs > prevAbs) {
+        // Same side, increased
+        changes.push({ action: `add_${newSide}`, instId: pos.instId, posSide: newSide, contractsDelta: newAbs - prevAbs, newPos: newAbs, avgPx });
+      } else {
+        // Same side, reduced
+        changes.push({ action: `reduce_${newSide}`, instId: pos.instId, posSide: newSide, contractsDelta: prevAbs - newAbs, newPos: newAbs, avgPx });
+      }
+      continue;
+    }
+
+    // Hedge mode (long/short)
+    if (rawPosSide !== "long" && rawPosSide !== "short") continue;
+    const posSide = rawPosSide as "long" | "short";
     const key = `${pos.instId}_${posSide}`;
     seen.add(key);
 
-    const newQty = parseFloat(pos.pos) || 0;
+    const newQty = rawQty;
     const prevSnap = prev.get(key);
     const prevQty = prevSnap?.pos ?? 0;
 
     if (newQty === prevQty) continue;
 
     const delta = newQty - prevQty;
-    const avgPx = parseFloat(pos.avgPx) || 0;
 
     if (prevQty === 0 && newQty > 0) {
       changes.push({ action: `open_${posSide}`, instId: pos.instId, posSide, contractsDelta: newQty, newPos: newQty, avgPx });
@@ -146,15 +192,21 @@ function detectChanges(
 
   // Positions that disappeared entirely (fully closed, not in new data)
   for (const [key, snap] of Array.from(prev.entries())) {
-    if (!seen.has(key) && snap.pos > 0) {
-      changes.push({
-        action: `close_${snap.posSide}`,
-        instId: snap.instId,
-        posSide: snap.posSide,
-        contractsDelta: snap.pos,
-        newPos: 0,
-        avgPx: snap.avgPx,
-      });
+    if (!seen.has(key)) {
+      const absPos = Math.abs(snap.pos);
+      if (absPos > 0) {
+        const side = snap.posSide === "net"
+          ? (snap.pos > 0 ? "long" : "short")
+          : snap.posSide;
+        changes.push({
+          action: `close_${side}` as ChangeAction,
+          instId: snap.instId,
+          posSide: side as "long" | "short",
+          contractsDelta: absPos,
+          newPos: 0,
+          avgPx: snap.avgPx,
+        });
+      }
     }
   }
 
@@ -186,187 +238,233 @@ async function executeCopyTrades(sourceId: number, change: PositionChange) {
     processedAt: new Date(),
   });
 
+  const signalTime = Date.now();
   const userStrategies = await getEnabledStrategiesForSignal(sourceId);
   console.log(`[CopyEngine] ${change.action} ${change.contractsDelta} on ${change.instId} → ${userStrategies.length} users`);
 
-  let successCount = 0;
-
-  for (const us of userStrategies) {
-    try {
-      const api = await getExchangeApiById(us.exchangeApiId);
-      if (!api || !api.isActive) {
-        console.log(`[CopyEngine] Skipping user ${us.userId}: API not active`);
-        continue;
-      }
-
-      const userExchange = (api.exchange || "okx").toLowerCase();
-      const multiplier = parseFloat(us.multiplier);
-
-      // Calculate order size based on exchange type
-      let sz: string;
-      let exchangeOrderId: string | undefined;
-
-      // Get OKX contract value (ctVal) for cross-exchange quantity conversion
-      const instrument = await getInstrument(change.instId);
-      const ctVal = instrument ? parseFloat(instrument.ctVal) : 0.01;
-
-      if (userExchange === "binance") {
-        // Binance: quantity in base asset (ETH)
-        const binanceSymbol = toBinanceSymbol(change.instId);
-        const binanceInfo = await getBinanceInstrument(binanceSymbol);
-        const precision = binanceInfo?.quantityPrecision ?? 3;
-        const ethQty = change.contractsDelta * ctVal * multiplier;
-        const minQty = parseFloat(binanceInfo?.minQty ?? "0.001");
-        const roundedQty = Math.max(minQty, Math.floor(ethQty * Math.pow(10, precision)) / Math.pow(10, precision));
-        sz = roundedQty.toFixed(precision);
-      } else if (userExchange === "bybit") {
-        // Bybit: quantity in base asset (ETH)
-        const bybitSymbol = toBybitSymbol(change.instId);
-        const bybitInfo = await getBybitInstrument(bybitSymbol);
-        const step = parseFloat(bybitInfo?.qtyStep ?? "0.001");
-        const minQty = parseFloat(bybitInfo?.minOrderQty ?? "0.001");
-        const ethQty = change.contractsDelta * ctVal * multiplier;
-        const rounded = Math.max(minQty, Math.floor(ethQty / step) * step);
-        const decimals = step.toString().includes(".") ? step.toString().split(".")[1].length : 0;
-        sz = rounded.toFixed(decimals);
-      } else if (userExchange === "bitget") {
-        // Bitget: quantity in contracts (similar to OKX)
-        sz = Math.max(1, Math.round(change.contractsDelta * multiplier)).toString();
-      } else if (userExchange === "gate") {
-        // Gate.io: quantity in contracts (integer)
-        sz = Math.max(1, Math.round(change.contractsDelta * multiplier)).toString();
-      } else {
-        // OKX: quantity in contracts
-        sz = Math.max(1, Math.round(change.contractsDelta * multiplier)).toString();
-      }
-
-      // Insert pending order record
-      await createCopyOrder({
-        userId: us.userId,
-        signalLogId: logId,
-        signalSourceId: sourceId,
-        exchangeApiId: us.exchangeApiId,
-        exchange: userExchange as "binance" | "okx" | "bybit" | "bitget" | "gate",
-        symbol: change.instId,
-        action: dbAction,
-        multiplier: us.multiplier,
-        signalQuantity: change.contractsDelta.toFixed(8),
-        actualQuantity: sz,
-        openPrice: change.avgPx > 0 ? change.avgPx.toFixed(8) : undefined,
-        openTime: new Date(),
-        status: "pending",
-      });
-
-      // Execute on exchange
-      if (userExchange === "binance") {
-        const binCreds: BinanceCredentials = {
-          apiKey: decrypt(api.apiKeyEncrypted),
-          secretKey: decrypt(api.secretKeyEncrypted),
-        };
-        if (change.action === "open_long" || change.action === "add_long") {
-          const r = await placeBinanceOrder(binCreds, change.instId, "BUY", "LONG", sz);
-          exchangeOrderId = r.orderId.toString();
-        } else if (change.action === "open_short" || change.action === "add_short") {
-          const r = await placeBinanceOrder(binCreds, change.instId, "SELL", "SHORT", sz);
-          exchangeOrderId = r.orderId.toString();
-        } else if (change.action === "close_long" || change.action === "reduce_long") {
-          const r = await closeBinancePosition(binCreds, change.instId, "LONG", sz);
-          exchangeOrderId = r.orderId.toString();
-        } else if (change.action === "close_short" || change.action === "reduce_short") {
-          const r = await closeBinancePosition(binCreds, change.instId, "SHORT", sz);
-          exchangeOrderId = r.orderId.toString();
-        }
-      } else if (userExchange === "bybit") {
-        const bybitCreds: BybitCredentials = {
-          apiKey: decrypt(api.apiKeyEncrypted),
-          secretKey: decrypt(api.secretKeyEncrypted),
-        };
-        if (change.action === "open_long" || change.action === "add_long") {
-          const r = await placeBybitOrder(bybitCreds, change.instId, "Buy", "LONG", sz);
-          exchangeOrderId = r.orderId;
-        } else if (change.action === "open_short" || change.action === "add_short") {
-          const r = await placeBybitOrder(bybitCreds, change.instId, "Sell", "SHORT", sz);
-          exchangeOrderId = r.orderId;
-        } else if (change.action === "close_long" || change.action === "reduce_long") {
-          const r = await closeBybitPosition(bybitCreds, change.instId, "LONG", sz);
-          exchangeOrderId = r.orderId;
-        } else if (change.action === "close_short" || change.action === "reduce_short") {
-          const r = await closeBybitPosition(bybitCreds, change.instId, "SHORT", sz);
-          exchangeOrderId = r.orderId;
-        }
-      } else if (userExchange === "bitget") {
-        const bitgetCreds: BitgetCredentials = {
-          apiKey: decrypt(api.apiKeyEncrypted),
-          secretKey: decrypt(api.secretKeyEncrypted),
-          passphrase: api.passphraseEncrypted ? decrypt(api.passphraseEncrypted) : "",
-        };
-        if (change.action === "open_long" || change.action === "add_long") {
-          const r = await openBitgetLong(bitgetCreds, change.instId, sz);
-          exchangeOrderId = r.orderId;
-        } else if (change.action === "open_short" || change.action === "add_short") {
-          const r = await openBitgetShort(bitgetCreds, change.instId, sz);
-          exchangeOrderId = r.orderId;
-        } else if (change.action === "close_long" || change.action === "reduce_long") {
-          const r = await closeBitgetLong(bitgetCreds, change.instId, sz);
-          exchangeOrderId = r.orderId;
-        } else if (change.action === "close_short" || change.action === "reduce_short") {
-          const r = await closeBitgetShort(bitgetCreds, change.instId, sz);
-          exchangeOrderId = r.orderId;
-        }
-      } else if (userExchange === "gate") {
-        const gateCreds: GateCredentials = {
-          apiKey: decrypt(api.apiKeyEncrypted),
-          secretKey: decrypt(api.secretKeyEncrypted),
-        };
-        const gateQty = parseInt(sz, 10);
-        if (change.action === "open_long" || change.action === "add_long") {
-          const r = await openGateLong(gateCreds, change.instId, gateQty);
-          exchangeOrderId = r.id.toString();
-        } else if (change.action === "open_short" || change.action === "add_short") {
-          const r = await openGateShort(gateCreds, change.instId, gateQty);
-          exchangeOrderId = r.id.toString();
-        } else if (change.action === "close_long" || change.action === "reduce_long") {
-          const r = await closeGateLong(gateCreds, change.instId, gateQty);
-          exchangeOrderId = r.id.toString();
-        } else if (change.action === "close_short" || change.action === "reduce_short") {
-          const r = await closeGateShort(gateCreds, change.instId, gateQty);
-          exchangeOrderId = r.id.toString();
-        }
-      } else {
-        // OKX (default)
-        const userCreds: OkxCredentials = {
-          apiKey: decrypt(api.apiKeyEncrypted),
-          secretKey: decrypt(api.secretKeyEncrypted),
-          passphrase: api.passphraseEncrypted ? decrypt(api.passphraseEncrypted) : "",
-        };
-        if (change.action === "open_long" || change.action === "add_long") {
-          const r = await placeOrder(userCreds, change.instId, "buy", "long", sz);
-          exchangeOrderId = r.ordId;
-        } else if (change.action === "open_short" || change.action === "add_short") {
-          const r = await placeOrder(userCreds, change.instId, "sell", "short", sz);
-          exchangeOrderId = r.ordId;
-        } else if (change.action === "close_long" || change.action === "reduce_long") {
-          const r = await closePosition(userCreds, change.instId, "long", sz);
-          exchangeOrderId = r.ordId;
-        } else if (change.action === "close_short" || change.action === "reduce_short") {
-          const r = await closePosition(userCreds, change.instId, "short", sz);
-          exchangeOrderId = r.ordId;
-        }
-      }
-
-      // We don't have the inserted ID from createCopyOrder (it returns void),
-      // so we update by finding the latest pending order for this user+signal
-      // For now just log success
-      successCount++;
-      console.log(`[CopyEngine] ✅ User ${us.userId}: ${change.action} ${sz} on ${change.instId}, ordId=${exchangeOrderId}`);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[CopyEngine] ❌ User ${us.userId} copy failed: ${msg}`);
-    }
+  if (userStrategies.length === 0) {
+    await updateSignalLog(logId, { status: "completed", errorMessage: "当前无订阅用户" });
+    console.log(`[CopyEngine] Done: no subscribers`);
+    return;
   }
 
-  await updateSignalLog(logId, { status: successCount > 0 ? "completed" : "failed" });
-  console.log(`[CopyEngine] Done: ${successCount}/${userStrategies.length} succeeded`);
+  // ── Pre-fetch shared data ONCE (avoid repeated API calls per user) ──
+  const instrument = await getInstrument(change.instId);
+  const ctVal = instrument ? parseFloat(instrument.ctVal) : 0.01;
+
+  // Pre-fetch exchange-specific instrument info (one per exchange type)
+  const binanceSymbol = toBinanceSymbol(change.instId);
+  const [binanceInfo] = await Promise.all([
+    getBinanceInstrument(binanceSymbol),
+  ]);
+
+  // ── Execute all users in PARALLEL ──
+  async function executeForUser(us: typeof userStrategies[0]): Promise<boolean> {
+    const api = await getExchangeApiById(us.exchangeApiId);
+    if (!api || !api.isActive) {
+      console.log(`[CopyEngine] Skipping user ${us.userId}: API not active`);
+      return false;
+    }
+
+    const userExchange = (api.exchange || "okx").toLowerCase();
+    const multiplier = parseFloat(us.multiplier);
+
+    // Calculate order size based on exchange type
+    let sz: string;
+    let exchangeOrderId: string | undefined;
+
+    if (userExchange === "binance") {
+      const precision = binanceInfo?.quantityPrecision ?? 3;
+      const ethQty = change.contractsDelta * ctVal * multiplier;
+      const minQty = parseFloat(binanceInfo?.minQty ?? "0.001");
+      const roundedQty = Math.max(minQty, Math.floor(ethQty * Math.pow(10, precision)) / Math.pow(10, precision));
+      sz = roundedQty.toFixed(precision);
+      console.log(`[CopyEngine] Binance calc: user=${us.userId}, contracts=${change.contractsDelta}, ctVal=${ctVal}, mult=${multiplier}, ethQty=${ethQty}, finalSz=${sz}`);
+    } else if (userExchange === "bybit") {
+      const bybitSymbol = toBybitSymbol(change.instId);
+      const bybitInfo = await getBybitInstrument(bybitSymbol);
+      const step = parseFloat(bybitInfo?.qtyStep ?? "0.001");
+      const minQty = parseFloat(bybitInfo?.minOrderQty ?? "0.001");
+      const ethQty = change.contractsDelta * ctVal * multiplier;
+      const rounded = Math.max(minQty, Math.floor(ethQty / step) * step);
+      const decimals = step.toString().includes(".") ? step.toString().split(".")[1].length : 0;
+      sz = rounded.toFixed(decimals);
+    } else if (userExchange === "bitget") {
+      sz = Math.max(1, Math.round(change.contractsDelta * multiplier)).toString();
+    } else if (userExchange === "gate") {
+      sz = Math.max(1, Math.round(change.contractsDelta * multiplier)).toString();
+    } else {
+      sz = Math.max(1, Math.round(change.contractsDelta * multiplier)).toString();
+    }
+
+    // Insert pending order record
+    const orderId = await createCopyOrder({
+      userId: us.userId,
+      signalLogId: logId,
+      signalSourceId: sourceId,
+      exchangeApiId: us.exchangeApiId,
+      exchange: userExchange as "binance" | "okx" | "bybit" | "bitget" | "gate",
+      symbol: change.instId,
+      action: dbAction,
+      multiplier: us.multiplier,
+      signalQuantity: change.contractsDelta.toFixed(8),
+      actualQuantity: sz,
+      openPrice: change.avgPx > 0 ? change.avgPx.toFixed(8) : undefined,
+      openTime: new Date(),
+      status: "pending",
+    });
+
+    // Check signal freshness — skip if too old
+    const elapsed = (Date.now() - signalTime) / 1000;
+    if (elapsed > SIGNAL_MAX_AGE_SECONDS) {
+      console.warn(`[CopyEngine] ⏰ Signal too old (${elapsed.toFixed(1)}s) for user ${us.userId}, skipping`);
+      await updateCopyOrder(orderId, { status: "failed", errorMessage: `信号超时 (${elapsed.toFixed(1)}s)` });
+      return false;
+    }
+
+    // Execute on exchange
+    if (userExchange === "binance") {
+      const binCreds: BinanceCredentials = {
+        apiKey: decrypt(api.apiKeyEncrypted),
+        secretKey: decrypt(api.secretKeyEncrypted),
+      };
+      if (change.action === "open_long" || change.action === "add_long") {
+        const r = await placeBinanceOrder(binCreds, change.instId, "BUY", "LONG", sz);
+        exchangeOrderId = r.orderId.toString();
+      } else if (change.action === "open_short" || change.action === "add_short") {
+        const r = await placeBinanceOrder(binCreds, change.instId, "SELL", "SHORT", sz);
+        exchangeOrderId = r.orderId.toString();
+      } else if (change.action === "close_long" || change.action === "reduce_long") {
+        const r = await closeBinancePosition(binCreds, change.instId, "LONG", sz);
+        exchangeOrderId = r.orderId.toString();
+      } else if (change.action === "close_short" || change.action === "reduce_short") {
+        const r = await closeBinancePosition(binCreds, change.instId, "SHORT", sz);
+        exchangeOrderId = r.orderId.toString();
+      }
+    } else if (userExchange === "bybit") {
+      const bybitCreds: BybitCredentials = {
+        apiKey: decrypt(api.apiKeyEncrypted),
+        secretKey: decrypt(api.secretKeyEncrypted),
+      };
+      if (change.action === "open_long" || change.action === "add_long") {
+        const r = await placeBybitOrder(bybitCreds, change.instId, "Buy", "LONG", sz);
+        exchangeOrderId = r.orderId;
+      } else if (change.action === "open_short" || change.action === "add_short") {
+        const r = await placeBybitOrder(bybitCreds, change.instId, "Sell", "SHORT", sz);
+        exchangeOrderId = r.orderId;
+      } else if (change.action === "close_long" || change.action === "reduce_long") {
+        const r = await closeBybitPosition(bybitCreds, change.instId, "LONG", sz);
+        exchangeOrderId = r.orderId;
+      } else if (change.action === "close_short" || change.action === "reduce_short") {
+        const r = await closeBybitPosition(bybitCreds, change.instId, "SHORT", sz);
+        exchangeOrderId = r.orderId;
+      }
+    } else if (userExchange === "bitget") {
+      const bitgetCreds: BitgetCredentials = {
+        apiKey: decrypt(api.apiKeyEncrypted),
+        secretKey: decrypt(api.secretKeyEncrypted),
+        passphrase: api.passphraseEncrypted ? decrypt(api.passphraseEncrypted) : "",
+      };
+      if (change.action === "open_long" || change.action === "add_long") {
+        const r = await openBitgetLong(bitgetCreds, change.instId, sz);
+        exchangeOrderId = r.orderId;
+      } else if (change.action === "open_short" || change.action === "add_short") {
+        const r = await openBitgetShort(bitgetCreds, change.instId, sz);
+        exchangeOrderId = r.orderId;
+      } else if (change.action === "close_long" || change.action === "reduce_long") {
+        const r = await closeBitgetLong(bitgetCreds, change.instId, sz);
+        exchangeOrderId = r.orderId;
+      } else if (change.action === "close_short" || change.action === "reduce_short") {
+        const r = await closeBitgetShort(bitgetCreds, change.instId, sz);
+        exchangeOrderId = r.orderId;
+      }
+    } else if (userExchange === "gate") {
+      const gateCreds: GateCredentials = {
+        apiKey: decrypt(api.apiKeyEncrypted),
+        secretKey: decrypt(api.secretKeyEncrypted),
+      };
+      const gateQty = parseInt(sz, 10);
+      if (change.action === "open_long" || change.action === "add_long") {
+        const r = await openGateLong(gateCreds, change.instId, gateQty);
+        exchangeOrderId = r.id.toString();
+      } else if (change.action === "open_short" || change.action === "add_short") {
+        const r = await openGateShort(gateCreds, change.instId, gateQty);
+        exchangeOrderId = r.id.toString();
+      } else if (change.action === "close_long" || change.action === "reduce_long") {
+        const r = await closeGateLong(gateCreds, change.instId, gateQty);
+        exchangeOrderId = r.id.toString();
+      } else if (change.action === "close_short" || change.action === "reduce_short") {
+        const r = await closeGateShort(gateCreds, change.instId, gateQty);
+        exchangeOrderId = r.id.toString();
+      }
+    } else {
+      // OKX (default)
+      const userCreds: OkxCredentials = {
+        apiKey: decrypt(api.apiKeyEncrypted),
+        secretKey: decrypt(api.secretKeyEncrypted),
+        passphrase: api.passphraseEncrypted ? decrypt(api.passphraseEncrypted) : "",
+      };
+      if (change.action === "open_long" || change.action === "add_long") {
+        const r = await placeOrder(userCreds, change.instId, "buy", "long", sz);
+        exchangeOrderId = r.ordId;
+      } else if (change.action === "open_short" || change.action === "add_short") {
+        const r = await placeOrder(userCreds, change.instId, "sell", "short", sz);
+        exchangeOrderId = r.ordId;
+      } else if (change.action === "close_long" || change.action === "reduce_long") {
+        const r = await closePosition(userCreds, change.instId, "long", sz);
+        exchangeOrderId = r.ordId;
+      } else if (change.action === "close_short" || change.action === "reduce_short") {
+        const r = await closePosition(userCreds, change.instId, "short", sz);
+        exchangeOrderId = r.ordId;
+      }
+    }
+
+    const orderTime = Date.now() - signalTime;
+    console.log(`[CopyEngine] ✅ User ${us.userId}: ${change.action} ${sz} on ${change.instId}, ordId=${exchangeOrderId}, latency=${orderTime}ms`);
+
+    // Update the copy order to 'open' status
+    await updateCopyOrder(orderId, {
+      status: "open",
+      exchangeOrderId: exchangeOrderId,
+      openTime: new Date(),
+    });
+    return true;
+  }
+
+  // Execute all users in parallel
+  const results = await Promise.allSettled(
+    userStrategies.map(async (us) => {
+      try {
+        return await executeForUser(us);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`[CopyEngine] ❌ User ${us.userId} copy failed: ${msg}`);
+        // Try to update copy order to failed
+        try {
+          const recentOrders = await listCopyOrdersBySignalLog(logId, us.userId);
+          if (recentOrders.length > 0) {
+            await updateCopyOrder(recentOrders[0].id, { status: "failed", errorMessage: msg });
+          }
+        } catch { /* ignore secondary error */ }
+        return false;
+      }
+    })
+  );
+
+  const successCount = results.filter(
+    (r) => r.status === "fulfilled" && r.value === true
+  ).length;
+  const totalTime = Date.now() - signalTime;
+
+  await updateSignalLog(logId, {
+    status: "completed",
+    errorMessage: successCount === 0
+      ? `所有 ${userStrategies.length} 个用户跟单失败`
+      : successCount < userStrategies.length
+        ? `${successCount}/${userStrategies.length} 个用户跟单成功`
+        : undefined,
+  });
+  console.log(`[CopyEngine] Done: ${successCount}/${userStrategies.length} succeeded, total=${totalTime}ms`);
 }
 
 // ─── WebSocket Connection ─────────────────────────────────────────────────────
@@ -428,19 +526,45 @@ function connectSource(state: SignalSourceState) {
       );
       if (relevant.length === 0) return;
 
+      // On initial sync (first snapshot after connect/reconnect), just store baseline — don't execute trades
+      if (state.initialSync) {
+        console.log(`[CopyEngine] Initial sync for "${state.name}": storing baseline positions, skipping trade execution`);
+        for (const pos of relevant) {
+          const rawPosSide = pos.posSide;
+          if (rawPosSide !== "long" && rawPosSide !== "short" && rawPosSide !== "net") continue;
+          const key = `${pos.instId}_${rawPosSide}`;
+          const qty = parseFloat(pos.pos) || 0;
+          if (qty === 0) {
+            state.positions.delete(key);
+          } else {
+            state.positions.set(key, {
+              instId: pos.instId,
+              posSide: rawPosSide as "long" | "short" | "net",
+              pos: qty,
+              avgPx: parseFloat(pos.avgPx) || 0,
+            });
+          }
+        }
+        state.initialSync = false;
+        return;
+      }
+
       const changes = detectChanges(state.positions, relevant);
 
-      // Update snapshot
+      // Update snapshot (support both net and hedge mode)
       for (const pos of relevant) {
-        if (pos.posSide !== "long" && pos.posSide !== "short") continue;
-        const key = `${pos.instId}_${pos.posSide}`;
-        const qty = parseFloat(pos.pos) || 0;
-        if (qty === 0) {
+        const rawPosSide = pos.posSide;
+        if (rawPosSide !== "long" && rawPosSide !== "short" && rawPosSide !== "net") continue;
+        const key = `${pos.instId}_${rawPosSide}`;
+        const qty = parseFloat(pos.pos) || 0; // signed for net mode
+        if (qty === 0 && rawPosSide !== "net") {
+          state.positions.delete(key);
+        } else if (qty === 0 && rawPosSide === "net") {
           state.positions.delete(key);
         } else {
           state.positions.set(key, {
             instId: pos.instId,
-            posSide: pos.posSide as "long" | "short",
+            posSide: rawPosSide as "long" | "short" | "net",
             pos: qty,
             avgPx: parseFloat(pos.avgPx) || 0,
           });
@@ -510,6 +634,7 @@ export async function startCopyEngine() {
       reconnectTimer: null,
       pingTimer: null,
       isConnected: false,
+      initialSync: true,
     };
 
     sourceStates.set(src.id, state);
@@ -548,6 +673,7 @@ export async function reloadSignalSource(sourceId: number) {
     reconnectTimer: null,
     pingTimer: null,
     isConnected: false,
+    initialSync: true,
   };
 
   sourceStates.set(src.id, state);

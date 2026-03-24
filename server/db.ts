@@ -304,16 +304,26 @@ export async function listSignalLogs(signalSourceId?: number, page = 1, limit = 
 }
 
 // ─── Copy Orders ──────────────────────────────────────────────────────────────
-export async function createCopyOrder(data: typeof copyOrders.$inferInsert) {
+export async function createCopyOrder(data: typeof copyOrders.$inferInsert): Promise<number> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.insert(copyOrders).values(data);
+  const [result] = await db.insert(copyOrders).values(data).$returningId();
+  return result.id;
 }
 
 export async function updateCopyOrder(id: number, data: Partial<typeof copyOrders.$inferInsert>) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.update(copyOrders).set(data).where(eq(copyOrders.id, id));
+}
+
+export async function listCopyOrdersBySignalLog(signalLogId: number, userId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = userId
+    ? and(eq(copyOrders.signalLogId, signalLogId), eq(copyOrders.userId, userId))
+    : eq(copyOrders.signalLogId, signalLogId);
+  return db.select().from(copyOrders).where(conditions).orderBy(desc(copyOrders.createdAt));
 }
 
 export async function listCopyOrders(userId?: number, page = 1, limit = 20) {

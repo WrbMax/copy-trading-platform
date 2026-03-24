@@ -156,7 +156,13 @@ export async function closePosition(
 /**
  * Get instrument info (lot size, min size etc.)
  */
+// Cache instrument info for 5 minutes to avoid repeated API calls
+const instrumentCache = new Map<string, { data: { ctVal: string; minSz: string; lotSz: string }; expiry: number }>();
+
 export async function getInstrument(instId: string): Promise<{ ctVal: string; minSz: string; lotSz: string } | null> {
+  const cached = instrumentCache.get(instId);
+  if (cached && Date.now() < cached.expiry) return cached.data;
+
   return new Promise((resolve) => {
     const path = `/api/v5/public/instruments?instType=SWAP&instId=${instId}`;
     https.get(`https://www.okx.com${path}`, (res) => {
@@ -167,7 +173,9 @@ export async function getInstrument(instId: string): Promise<{ ctVal: string; mi
           const json = JSON.parse(data);
           const inst = json.data?.[0];
           if (!inst) return resolve(null);
-          resolve({ ctVal: inst.ctVal, minSz: inst.minSz, lotSz: inst.lotSz });
+          const result = { ctVal: inst.ctVal, minSz: inst.minSz, lotSz: inst.lotSz };
+          instrumentCache.set(instId, { data: result, expiry: Date.now() + 5 * 60 * 1000 });
+          resolve(result);
         } catch {
           resolve(null);
         }

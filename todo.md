@@ -105,3 +105,11 @@
 - [x] 检查收益分成逻辑正确（盈利时按差额分配给上级，从交易员扣除）
 - [x] 检查积分兑换（积分暂不可兑换 USDT，逻辑正确）
 - [x] 重新构建并部署到服务器
+- [x] Binance下单前自动设置20倍杠杆
+- [x] 信号时效性控制：超时信号不下单（引擎重启时的旧仓位不触发跟单）
+- [x] 信号源日志状态显示修正（已接收/接收失败，而非成功/失败）
+- [x] 信号日志详情展示每个用户的跟单明细
+- [x] 跟单引擎：用户间并行执行下单（Promise.allSettled替代串行for循环）
+- [x] 跟单引擎：公共API结果缓存（getInstrument、getBinanceInstrument等）
+- [x] 跟单引擎：Binance isHedgeMode和setLeverage缓存避免重复调用
+- [x] 修复Bitget平仓tradeSide硬编码为open的bug

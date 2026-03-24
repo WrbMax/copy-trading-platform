@@ -1,0 +1,9 @@
+{
+  "query": "SELECT us.id, us.userId, us.signalSourceId, us.multiplier, us.isEnabled, us.exchangeApiId, ea.exchange, ea.isActive as apiActive FROM user_strategies us LEFT JOIN exchange_apis ea ON us.exchangeApiId = ea.id ORDER BY us.userId;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 2yRRhmQmjmz9LMP.root --database 3xjoeN6gTpdmQoJAnkq7pe --execute SELECT us.id, us.userId, us.signalSourceId, us.multiplier, us.isEnabled, us.exchangeApiId, ea.exchange, ea.isActive as apiActive FROM user_strategies us LEFT JOIN exchange_apis ea ON us.exchangeApiId = ea.id ORDER BY us.userId;",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 1755
+}
