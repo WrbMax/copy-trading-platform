@@ -95,7 +95,7 @@ export default function Team() {
                               <Input
                                 type="number"
                                 min={parseFloat(profile?.revenueShareRatio || "0")}
-                                max="100"
+                                max="70"
                                 step="0.1"
                                 value={editRatio}
                                 onChange={(e) => setEditRatio(e.target.value)}
@@ -153,7 +153,7 @@ export default function Team() {
               </div>
             )}
             <p className="text-xs text-muted-foreground mt-3">
-              提示：您可以为邀请的成员设置分成比例，比例不能低于您自己的比例 ({parseFloat(profile?.revenueShareRatio || "0").toFixed(1)}%)。差额部分为您的推荐收益。
+              提示：您可以为邀请的成员设置分成比例，范围为 {parseFloat(profile?.revenueShareRatio || "0").toFixed(1)}% - 70%。该比例表示下级盈利时被扣除的比例，其中您与下级比例的差额部分为您的推荐收益。
             </p>
           </CardContent>
         </Card>

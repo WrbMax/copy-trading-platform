@@ -186,12 +186,12 @@ export default function AdminUsers() {
                   type="number"
                   step="0.1"
                   min="0"
-                  max="100"
+                  max="70"
                   value={editRatio}
                   onChange={(e) => setEditRatio(e.target.value)}
                   className="bg-input border-border"
                 />
-                <p className="text-xs text-muted-foreground">设置该用户盈利时被扣除的分成比例（0 = 不扣分成）</p>
+                <p className="text-xs text-muted-foreground">设置该用户盈利时被扣除的分成比例，范围 0% - 70%</p>
               </div>
               <Button
                 className="w-full"

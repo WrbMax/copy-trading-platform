@@ -49,17 +49,20 @@ export const userRouter = router({
   }),
 
   setInviteeRevenueShare: protectedProcedure
-    .input(z.object({ inviteeId: z.number(), ratio: z.number().min(0).max(100) }))
+    .input(z.object({ inviteeId: z.number(), ratio: z.number().min(0).max(70) }))
     .mutation(async ({ input, ctx }) => {
       // Verify the invitee is actually invited by this user
       const invitee = await getUserById(input.inviteeId);
       if (!invitee) throw new TRPCError({ code: "NOT_FOUND", message: "用户不存在" });
       if (invitee.referrerId !== ctx.user.id) throw new TRPCError({ code: "FORBIDDEN", message: "您只能给自己邀请的人设置分成比例" });
-      // Invitee's ratio must be >= user's own ratio (higher ratio = more deducted from invitee, difference goes to referrer)
+      // Invitee's ratio must be >= user's own ratio and <= 70%
       const currentUser = await getUserById(ctx.user.id);
       const myRatio = parseFloat(currentUser?.revenueShareRatio || "0");
       if (input.ratio < myRatio) {
-        throw new TRPCError({ code: "BAD_REQUEST", message: `下级分成比例不能低于您自己的比例 (${myRatio}%)` });
+        throw new TRPCError({ code: "BAD_REQUEST", message: `分成比例不能低于您自己的比例 (${myRatio}%)` });
+      }
+      if (input.ratio > 70) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "分成比例不能超过70%" });
       }
       await updateUser(input.inviteeId, { revenueShareRatio: input.ratio.toFixed(2) });
       return { success: true };
@@ -110,11 +113,10 @@ export const userRouter = router({
   adminSetRevenueShareRatio: adminProcedure
     .input(z.object({
       userId: z.number(),
-      ratio: z.number().min(0).max(100),
+      ratio: z.number().min(0).max(70),
     }))
     .mutation(async ({ input }) => {
-      const maxRatio = parseFloat((await getSystemConfig("revenue_share_max_ratio")) ?? "50");
-      if (input.ratio > maxRatio) throw new TRPCError({ code: "BAD_REQUEST", message: `收益分成比例不能超过系统上限 ${maxRatio}%` });
+      if (input.ratio > 70) throw new TRPCError({ code: "BAD_REQUEST", message: "分成比例不能超过70%" });
 
       const user = await getUserById(input.userId);
       if (!user) throw new TRPCError({ code: "NOT_FOUND" });
