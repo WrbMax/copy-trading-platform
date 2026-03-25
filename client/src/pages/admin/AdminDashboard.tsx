@@ -8,13 +8,13 @@ export default function AdminDashboard() {
 
   const cards = [
     { label: "注册用户总数", value: stats?.totalUsers ?? 0, unit: "人", icon: Users, color: "text-primary" },
-    { label: "总充值笔数", value: stats?.totalDeposits ?? 0, unit: "笔", icon: CreditCard, color: "text-profit" },
+    { label: "总充值金额", value: `${(stats?.totalDeposits ?? 0).toFixed(2)}`, unit: "USDT", icon: CreditCard, color: "text-profit" },
     { label: "异常订单", value: stats?.abnormalOrders ?? 0, unit: "笔", icon: ListOrdered, color: "text-loss" },
     { label: "平台总盈利", value: `${(stats?.totalProfit ?? 0).toFixed(2)}`, unit: "USDT", icon: TrendingUp, color: "text-profit" },
     { label: "待审充值", value: stats?.pendingDeposits ?? 0, unit: "笔", icon: CreditCard, color: "text-yellow-500" },
     { label: "待审提现", value: stats?.pendingWithdrawals ?? 0, unit: "笔", icon: CreditCard, color: "text-yellow-500" },
     { label: "总收益分成", value: `${(stats?.totalRevenueShare ?? 0).toFixed(2)}`, unit: "USDT", icon: TrendingUp, color: "text-primary" },
-    { label: "总提现笔数", value: stats?.totalWithdrawals ?? 0, unit: "笔", icon: Zap, color: "text-primary" },
+    { label: "总提现金额", value: `${(stats?.totalWithdrawals ?? 0).toFixed(2)}`, unit: "USDT", icon: Zap, color: "text-primary" },
   ];
 
   return (
