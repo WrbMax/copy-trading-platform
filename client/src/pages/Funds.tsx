@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Copy, AlertCircle, Wallet, ArrowDownToLine, ArrowUpFromLine, History } from "lucide-react";
+import { Copy, AlertCircle, Wallet, ArrowDownToLine, ArrowUpFromLine, History, TrendingDown, TrendingUp, Settings2 } from "lucide-react";
 import { toast } from "sonner";
 
 const STATUS_MAP: Record<string, { label: string; color: string }> = {
@@ -23,6 +23,7 @@ export default function Funds() {
   const { data: depositAddr, isLoading: addrLoading } = trpc.funds.depositAddress.useQuery();
   const { data: deposits } = trpc.funds.myDeposits.useQuery({ page: 1, limit: 50 });
   const { data: withdrawals } = trpc.funds.myWithdrawals.useQuery({ page: 1, limit: 50 });
+  const { data: transactions } = trpc.funds.myTransactions.useQuery({ page: 1, limit: 100 });
 
   const [depositAmount, setDepositAmount] = useState("");
   const [txHash, setTxHash] = useState("");
@@ -222,6 +223,52 @@ export default function Funds() {
 
           {/* History Tab */}
           <TabsContent value="history" className="mt-4 space-y-6">
+            {/* All Fund Transactions (unified flow) */}
+            <div>
+              <h3 className="text-sm font-medium mb-3 text-muted-foreground flex items-center gap-1.5">
+                <History className="w-3.5 h-3.5" /> 资金流水
+              </h3>
+              {!transactions?.items.length ? (
+                <p className="text-sm text-muted-foreground py-6 text-center">暂无资金流水</p>
+              ) : (
+                <div className="space-y-2">
+                  {transactions.items.map((t: any) => {
+                    const amt = parseFloat(t.amount);
+                    const isPositive = amt > 0;
+                    const typeConfig: Record<string, { label: string; icon: React.ReactNode; color: string }> = {
+                      deposit: { label: "充值到账", icon: <ArrowDownToLine className="w-3.5 h-3.5" />, color: "text-emerald-500" },
+                      withdrawal: { label: "提现", icon: <ArrowUpFromLine className="w-3.5 h-3.5" />, color: "text-red-500" },
+                      revenue_share_in: { label: "分成收入", icon: <TrendingUp className="w-3.5 h-3.5" />, color: "text-emerald-500" },
+                      revenue_share_out: { label: "分成扣除", icon: <TrendingDown className="w-3.5 h-3.5" />, color: "text-orange-500" },
+                      admin_adjust: { label: "管理员调整", icon: <Settings2 className="w-3.5 h-3.5" />, color: "text-blue-500" },
+                    };
+                    const cfg = typeConfig[t.type] || { label: t.type, icon: null, color: "text-muted-foreground" };
+                    return (
+                      <div key={t.id} className="flex items-center justify-between p-3 rounded-lg bg-secondary/50 border border-border">
+                        <div className="flex items-center gap-3">
+                          <div className={`w-8 h-8 rounded-full bg-secondary flex items-center justify-center ${cfg.color}`}>
+                            {cfg.icon}
+                          </div>
+                          <div>
+                            <p className="text-sm font-medium text-foreground">{cfg.label}</p>
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                              {new Date(t.createdAt).toLocaleString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false })}
+                              {t.note && <span className="ml-2 text-muted-foreground/70">{t.note}</span>}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <p className={`text-sm font-semibold font-mono ${isPositive ? "text-emerald-500" : "text-red-500"}`}>
+                            {isPositive ? "+" : ""}{amt.toFixed(4)} USDT
+                          </p>
+                          <p className="text-xs text-muted-foreground mt-0.5">余额 {parseFloat(t.balanceAfter).toFixed(4)}</p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
             <div>
               <h3 className="text-sm font-medium mb-3 text-muted-foreground flex items-center gap-1.5">
                 <ArrowDownToLine className="w-3.5 h-3.5" /> 充值记录
