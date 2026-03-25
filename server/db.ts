@@ -136,17 +136,18 @@ export async function getUserReferralChain(userId: number): Promise<Array<{ id: 
   const db = await getDb();
   if (!db) return [];
   const chain: Array<{ id: number; revenueShareRatio: string }> = [];
-  let currentId: number | null | undefined = userId;
+  // Start from the trader's direct referrer and walk up the tree
+  const trader = await getUserById(userId);
+  if (!trader || !trader.referrerId) return [];
+  let currentReferrerId: number | null | undefined = trader.referrerId;
   const visited = new Set<number>();
-  while (currentId) {
-    if (visited.has(currentId)) break;
-    visited.add(currentId);
-    const user = await getUserById(currentId);
-    if (!user || !user.referrerId) break;
-    const parent = await getUserById(user.referrerId);
-    if (!parent) break;
-    chain.push({ id: parent.id, revenueShareRatio: parent.revenueShareRatio });
-    currentId = parent.referrerId;
+  while (currentReferrerId) {
+    if (visited.has(currentReferrerId)) break;
+    visited.add(currentReferrerId);
+    const ancestor = await getUserById(currentReferrerId);
+    if (!ancestor) break;
+    chain.push({ id: ancestor.id, revenueShareRatio: ancestor.revenueShareRatio });
+    currentReferrerId = ancestor.referrerId ?? null;
   }
   return chain;
 }
