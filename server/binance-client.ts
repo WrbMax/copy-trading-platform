@@ -77,6 +77,68 @@ export interface BinanceOrderResult {
 }
 
 /**
+ * Comprehensive Binance API test:
+ * 1. Verify API key validity and futures trading permission
+ * 2. Check position mode (must be hedge/dual-side for copy trading)
+ * Returns { success, message, checks } with detailed per-check results.
+ */
+export async function testBinanceApi(creds: BinanceCredentials): Promise<{
+  success: boolean;
+  message: string;
+  checks: Array<{ name: string; passed: boolean; detail: string }>;
+}> {
+  const checks: Array<{ name: string; passed: boolean; detail: string }> = [];
+
+  // ── Check 1: API Key validity & futures permission ──
+  let accountOk = false;
+  try {
+    await binanceRequest<object>(creds, "GET", "/fapi/v2/account", {});
+    accountOk = true;
+    checks.push({ name: "API密钥有效性", passed: true, detail: "API Key 验证通过，合约账户可访问" });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    let detail = "API Key 无效或已过期，请重新生成";
+    if (msg.includes("-2015")) detail = "API Key 无效、IP未在白名单，或未开启合约交易权限";
+    else if (msg.includes("-1022")) detail = "Secret Key 错误，签名验证失败";
+    else if (msg.includes("-1100") || msg.includes("-1102")) detail = "请求参数错误";
+    checks.push({ name: "API密钥有效性", passed: false, detail });
+    return {
+      success: false,
+      message: `验证失败：${detail}`,
+      checks,
+    };
+  }
+
+  // ── Check 2: Position mode (must be hedge/dual-side) ──
+  if (accountOk) {
+    try {
+      const data = await binanceRequest<{ dualSidePosition: boolean }>(creds, "GET", "/fapi/v1/positionSide/dual", {});
+      if (data.dualSidePosition === true) {
+        checks.push({ name: "持仓模式", passed: true, detail: "双向持仓模式（对冲模式），符合跟单要求" });
+      } else {
+        checks.push({
+          name: "持仓模式",
+          passed: false,
+          detail: "当前为单向持仓模式，请在币安合约页面 → 设置 → 持仓模式，切换为「双向持仓」后重新测试",
+        });
+      }
+    } catch {
+      checks.push({ name: "持仓模式", passed: false, detail: "持仓模式查询失败，请确认合约账户已开通" });
+    }
+  }
+
+  const allPassed = checks.every((c) => c.passed);
+  const failedChecks = checks.filter((c) => !c.passed);
+
+  if (allPassed) {
+    return { success: true, message: "连接成功，所有检测项通过", checks };
+  } else {
+    const summary = failedChecks.map((c) => c.detail).join("；");
+    return { success: false, message: summary, checks };
+  }
+}
+
+/**
  * Check if the Binance account is in hedge (dual-side) position mode.
  * Returns true if hedge mode, false if one-way mode.
  */
@@ -219,33 +281,60 @@ export async function getBinanceBalance(
 
 /**
  * Query a specific Binance futures order to get fill details.
+ * Directly queries /fapi/v1/userTrades which returns both commission AND realizedPnl.
+ * Avoids /fapi/v1/order which:
+ *   1. Does NOT return realizedPnl for futures orders
+ *   2. Returns -2013 "Order does not exist" for reduceOnly/close orders in some cases
  */
 export async function getBinanceOrderDetail(
   creds: BinanceCredentials,
   symbol: string,
   orderId: string
 ): Promise<{ avgPrice: string; executedQty: string; realizedPnl: string; commission: string; status: string }> {
-  const data = await binanceRequest<{
-    avgPrice: string; executedQty: string; realizedPnl: string; status: string;
-  }>(creds, "GET", "/fapi/v1/order", { symbol, orderId });
-  // Also get trades for commission
-  let commission = "0";
-  try {
-    const trades = await binanceRequest<Array<{ commission: string; commissionAsset: string }>>(
-      creds, "GET", "/fapi/v1/userTrades", { symbol, orderId, limit: 10 }
-    );
-    commission = trades
-      .filter(t => t.commissionAsset === "USDT")
-      .reduce((sum, t) => sum + parseFloat(t.commission), 0)
-      .toFixed(8);
-  } catch { /* ignore trade query errors */ }
-  return {
-    avgPrice: data.avgPrice || "0",
-    executedQty: data.executedQty || "0",
-    realizedPnl: data.realizedPnl || "0",
-    commission,
-    status: data.status || "UNKNOWN",
-  };
+  // Retry up to 3 times with increasing delays to handle settlement lag
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const trades = await binanceRequest<Array<{ price: string; qty: string; commission: string; commissionAsset: string; realizedPnl: string }>>(
+        creds, "GET", "/fapi/v1/userTrades", { symbol, orderId, limit: 50 }
+      );
+
+      if (trades && trades.length > 0) {
+        // Calculate weighted average price from all fills
+        const totalQty = trades.reduce((sum, t) => sum + parseFloat(t.qty || "0"), 0);
+        const avgPrice = totalQty > 0
+          ? (trades.reduce((sum, t) => sum + parseFloat(t.price || "0") * parseFloat(t.qty || "0"), 0) / totalQty).toFixed(8)
+          : "0";
+
+        const commission = trades
+          .filter(t => t.commissionAsset === "USDT")
+          .reduce((sum, t) => sum + parseFloat(t.commission || "0"), 0)
+          .toFixed(8);
+
+        const realizedPnl = trades
+          .reduce((sum, t) => sum + parseFloat(t.realizedPnl || "0"), 0)
+          .toFixed(8);
+
+        return {
+          avgPrice,
+          executedQty: totalQty.toFixed(8),
+          realizedPnl,
+          commission,
+          status: "FILLED",
+        };
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.warn(`[Binance] getBinanceOrderDetail attempt ${attempt} failed: ${msg}`);
+    }
+
+    // Wait before retry: 3s, 5s, 8s
+    if (attempt < 3) {
+      const delay = attempt === 1 ? 3000 : 5000;
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+
+  throw new Error(`Binance API error -2013: Order does not exist.`);
 }
 
 /**
@@ -290,70 +379,7 @@ export function calcBinanceQty(
   okxCtVal: number, // OKX contract value in ETH (e.g. 0.01 for ETH-USDT-SWAP)
   quantityPrecision: number
 ): string {
-  const ethAmount = okxContracts * okxCtVal;
+  const ethQty = okxContracts * okxCtVal;
   const factor = Math.pow(10, quantityPrecision);
-  const rounded = Math.floor(ethAmount * factor) / factor;
-  return rounded.toFixed(quantityPrecision);
-}
-
-/**
- * Fetch all user trades for a given symbol from Binance and compute aggregate PnL stats.
- * This gives the TRUE realized PnL as recorded by the exchange, independent of platform order tracking.
- * Returns: totalProfit (sum of profitable close trades), totalLoss (sum of losing close trades),
- *          netPnl (totalProfit - totalLoss - totalFee), totalFee.
- */
-export async function getBinanceTradeStats(
-  creds: BinanceCredentials,
-  symbol: string
-): Promise<{ totalProfit: number; totalLoss: number; netPnl: number; totalFee: number }> {
-  // Fetch all trades (paginated by startTime)
-  let allTrades: Array<{ realizedPnl: string; commission: string; time: number }> = [];
-  let startTime = 0;
-
-  for (let i = 0; i < 20; i++) { // Safety limit: max 20 pages = 20,000 trades
-    const params: Record<string, string | number> = { symbol, limit: 1000 };
-    if (startTime > 0) params.startTime = startTime;
-
-    const trades = await binanceRequest<Array<{ realizedPnl: string; commission: string; time: number }>>(
-      creds, "GET", "/fapi/v1/userTrades", params
-    );
-    if (!Array.isArray(trades) || trades.length === 0) break;
-    allTrades = allTrades.concat(trades);
-
-    const lastTime = trades[trades.length - 1].time;
-    if (startTime === lastTime + 1) break;
-    startTime = lastTime + 1;
-
-    if (trades.length < 1000) break;
-  }
-
-  // Aggregate: realizedPnl from Binance is the raw PnL per trade fill (non-zero only for closing trades)
-  // commission is the fee per trade fill
-  let totalRealizedPnl = 0; // sum of all realizedPnl (includes both profit and loss closes)
-  let totalFee = 0;
-  let grossProfit = 0; // sum of positive realizedPnl trades
-  let grossLoss = 0;   // sum of abs(negative realizedPnl) trades
-
-  for (const trade of allTrades) {
-    const pnl = parseFloat(trade.realizedPnl || "0");
-    const fee = parseFloat(trade.commission || "0");
-    totalRealizedPnl += pnl;
-    totalFee += fee;
-    if (pnl > 0) grossProfit += pnl;
-    if (pnl < 0) grossLoss += Math.abs(pnl);
-  }
-
-  // Net PnL = total realizedPnl - total fees (this matches what Binance shows as "Realized PNL")
-  const netPnl = totalRealizedPnl - totalFee;
-
-  // For the user display:
-  // totalProfit = grossProfit (sum of winning trades' PnL, before fee)
-  // totalLoss = grossLoss + totalFee (losses include both losing trades and all fees)
-  // This ensures: netPnl = totalProfit - totalLoss = grossProfit - grossLoss - totalFee
-  return {
-    totalProfit: grossProfit,
-    totalLoss: grossLoss + totalFee,
-    netPnl,
-    totalFee,
-  };
+  return (Math.floor(ethQty * factor) / factor).toFixed(quantityPrecision);
 }

@@ -285,7 +285,7 @@ export default function AdminSignalSources() {
                             <p className="font-semibold">{parseFloat(log.quantity).toFixed(4)}</p>
                           </div>
                           <div className="bg-background/50 rounded p-2">
-                            <p className="text-muted-foreground mb-0.5">价格</p>
+                            <p className="text-muted-foreground mb-0.5">信号均价</p>
                             <p className="font-semibold">{log.price ? parseFloat(log.price).toFixed(2) : "-"}</p>
                           </div>
                           <div className="bg-background/50 rounded p-2">

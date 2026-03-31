@@ -10,6 +10,8 @@ import {
   listRevenueShareRecords,
   listUsers,
   updateUser,
+  listCopyOrders,
+  getUserOrderStats,
 } from "../db";
 import { protectedProcedure, router } from "../_core/trpc";
 import { adminProcedure } from "../_core/trpc";
@@ -66,6 +68,19 @@ export const userRouter = router({
       }
       await updateUser(input.inviteeId, { revenueShareRatio: input.ratio.toFixed(2) });
       return { success: true };
+    }),
+
+  // 查看直推成员的交易记录（只能查看自己直接邀请的人）
+  inviteeMemberOrders: protectedProcedure
+    .input(z.object({ inviteeId: z.number(), page: z.number().default(1), limit: z.number().default(20) }))
+    .query(async ({ input, ctx }) => {
+      // 安全校验：确认该成员确实是当前用户的直推下级
+      const invitee = await getUserById(input.inviteeId);
+      if (!invitee) throw new TRPCError({ code: "NOT_FOUND", message: "用户不存在" });
+      if (invitee.referrerId !== ctx.user.id) throw new TRPCError({ code: "FORBIDDEN", message: "您只能查看自己直接邀请的成员" });
+      const orders = await listCopyOrders(input.inviteeId, input.page, input.limit);
+      const stats = await getUserOrderStats(input.inviteeId);
+      return { ...orders, stats, inviteeName: invitee.name || `用户#${invitee.id}` };
     }),
 
   // Admin

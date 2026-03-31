@@ -5,11 +5,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
-import { Plus, Trash2, TestTube, Shield, AlertCircle, CheckCircle, Clock } from "lucide-react";
+import { Plus, Trash2, TestTube, Shield, AlertCircle, CheckCircle, Clock, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 
 type ExchangeType = "binance" | "okx" | "bybit" | "bitget" | "gate";
@@ -26,6 +26,8 @@ export default function ExchangeApi() {
   const utils = trpc.useUtils();
   const { data: apis, isLoading } = trpc.exchange.list.useQuery();
   const [open, setOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteTargetId, setDeleteTargetId] = useState<number | null>(null);
   const [exchange, setExchange] = useState<ExchangeType>("binance");
   const [label, setLabel] = useState("");
   const [apiKey, setApiKey] = useState("");
@@ -45,7 +47,13 @@ export default function ExchangeApi() {
   });
 
   const deleteMutation = trpc.exchange.delete.useMutation({
-    onSuccess: () => { toast.success("已删除"); utils.exchange.list.invalidate(); },
+    onSuccess: () => {
+      toast.success("已删除，关联策略已自动禁用");
+      utils.exchange.list.invalidate();
+      utils.strategy.myStrategies.invalidate();
+      setDeleteDialogOpen(false);
+      setDeleteTargetId(null);
+    },
     onError: (e) => toast.error(e.message),
   });
 
@@ -60,6 +68,17 @@ export default function ExchangeApi() {
   });
 
   const getExchangeInfo = (ex: string) => EXCHANGES.find((e) => e.value === ex) ?? { abbr: ex.toUpperCase(), label: ex };
+
+  const handleDeleteClick = (apiId: number) => {
+    setDeleteTargetId(apiId);
+    setDeleteDialogOpen(true);
+  };
+
+  const confirmDelete = () => {
+    if (deleteTargetId) {
+      deleteMutation.mutate({ id: deleteTargetId });
+    }
+  };
 
   return (
     <UserLayout>
@@ -164,7 +183,7 @@ export default function ExchangeApi() {
                         <Button size="sm" variant="outline" className="bg-transparent text-xs" onClick={() => testMutation.mutate({ id: api.id })} disabled={testMutation.isPending}>
                           <TestTube className="w-3.5 h-3.5 mr-1" />测试
                         </Button>
-                        <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => { if (confirm("确认删除此API？")) deleteMutation.mutate({ id: api.id }); }}>
+                        <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => handleDeleteClick(api.id)}>
                           <Trash2 className="w-4 h-4" />
                         </Button>
                       </div>
@@ -175,6 +194,29 @@ export default function ExchangeApi() {
             })}
           </div>
         )}
+
+        {/* Delete Confirmation Dialog */}
+        <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+          <DialogContent className="bg-card border-border max-w-sm">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-destructive">
+                <AlertTriangle className="w-5 h-5" />
+                确认删除API
+              </DialogTitle>
+              <DialogDescription className="text-muted-foreground pt-2">
+                删除此API后，所有使用该API的策略将被<strong className="text-foreground">自动禁用</strong>。您需要重新绑定新的API并在策略中心重新选择后才能继续跟单。
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter className="flex gap-2 mt-4">
+              <Button variant="outline" className="flex-1 bg-transparent" onClick={() => setDeleteDialogOpen(false)}>
+                取消
+              </Button>
+              <Button variant="destructive" className="flex-1" onClick={confirmDelete} disabled={deleteMutation.isPending}>
+                {deleteMutation.isPending ? "删除中..." : "确认删除"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <Card className="bg-card border-border">
           <CardContent className="p-5">

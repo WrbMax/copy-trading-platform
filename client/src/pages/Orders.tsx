@@ -4,30 +4,31 @@ import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { TrendingUp, TrendingDown, AlertTriangle, ChevronLeft, ChevronRight, Clock, BarChart2 } from "lucide-react";
+import { TrendingUp, TrendingDown, ChevronLeft, ChevronRight, Clock, BarChart2 } from "lucide-react";
 
-function PnlBadge({ value }: { value: string | null }) {
-  if (!value) return <span className="text-muted-foreground text-sm">-</span>;
+function PnlCell({ value }: { value: string | null | undefined }) {
+  if (!value) return <span className="text-muted-foreground text-xs">-</span>;
   const n = parseFloat(value);
-  if (n > 0) return <span className="text-profit font-semibold text-sm">+{n.toFixed(4)}</span>;
-  if (n < 0) return <span className="text-loss font-semibold text-sm">{n.toFixed(4)}</span>;
-  return <span className="text-muted-foreground text-sm">0.0000</span>;
+  if (isNaN(n)) return <span className="text-muted-foreground text-xs">-</span>;
+  if (n > 0) return <span className="text-profit font-semibold text-xs">+{n.toFixed(4)}</span>;
+  if (n < 0) return <span className="text-loss font-semibold text-xs">{n.toFixed(4)}</span>;
+  return <span className="text-muted-foreground text-xs">0.0000</span>;
 }
 
-function formatDateTime(d: Date | string | null | undefined) {
+function formatTime(d: Date | string | null | undefined) {
   if (!d) return "-";
   return new Date(d).toLocaleString("zh-CN", {
-    year: "numeric", month: "2-digit", day: "2-digit",
+    month: "2-digit", day: "2-digit",
     hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
   });
 }
 
-const ACTION_LABELS: Record<string, { label: string; isLong: boolean }> = {
-  open_long:  { label: "开多", isLong: true },
-  open_short: { label: "开空", isLong: false },
-  close_long: { label: "平多", isLong: true },
-  close_short:{ label: "平空", isLong: false },
-  close_all:  { label: "全平", isLong: false },
+const ACTION_META: Record<string, { label: string; colorClass: string }> = {
+  open_long:   { label: "开多", colorClass: "bg-profit/20 text-profit" },
+  open_short:  { label: "开空", colorClass: "bg-loss/20 text-loss" },
+  close_long:  { label: "平多", colorClass: "bg-profit/10 text-profit/70" },
+  close_short: { label: "平空", colorClass: "bg-loss/10 text-loss/70" },
+  close_all:   { label: "全平", colorClass: "bg-muted text-muted-foreground" },
 };
 
 const EXCHANGE_LABELS: Record<string, string> = {
@@ -48,15 +49,15 @@ export default function Orders() {
       <div className="space-y-6">
         <div>
           <h1 className="text-2xl font-bold">订单记录</h1>
-          <p className="text-muted-foreground text-sm mt-1">查看所有策略跟单的开平仓记录和盈亏情况</p>
+          <p className="text-muted-foreground text-sm mt-1">每笔开仓和平仓均单独展示，与交易所历史成交一一对应</p>
         </div>
 
         {/* Stats */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {[
-            { label: "总订单数", value: stats?.totalOrders ?? 0, unit: "笔", icon: <BarChart2 className="w-4 h-4" /> },
+            { label: "总交易笔数", value: stats?.totalOrders ?? 0, unit: "笔", icon: <BarChart2 className="w-4 h-4" /> },
             { label: "持仓中", value: stats?.openOrders ?? 0, unit: "笔", color: "text-primary", icon: <TrendingUp className="w-4 h-4" /> },
-            { label: "总盈利", value: (stats?.totalProfit ?? 0).toFixed(2), unit: "USDT", color: "text-profit", icon: <TrendingUp className="w-4 h-4" /> },
+            { label: "累计盈利", value: (stats?.totalProfit ?? 0).toFixed(2), unit: "USDT", color: "text-profit", icon: <TrendingUp className="w-4 h-4" /> },
             { label: "净盈亏", value: `${(stats?.netPnl ?? 0) >= 0 ? "+" : ""}${(stats?.netPnl ?? 0).toFixed(4)}`, unit: "USDT", color: (stats?.netPnl ?? 0) >= 0 ? "text-profit" : "text-loss", icon: <TrendingDown className="w-4 h-4" /> },
           ].map((s) => (
             <Card key={s.label} className="bg-card border-border">
@@ -79,7 +80,7 @@ export default function Orders() {
             <CardTitle className="text-base flex items-center gap-2">
               <Clock className="w-4 h-4 text-muted-foreground" />
               订单列表
-              {total > 0 && <span className="text-xs text-muted-foreground font-normal ml-1">共 {total} 笔</span>}
+              {total > 0 && <span className="text-xs text-muted-foreground font-normal ml-1">共 {total} 条</span>}
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
@@ -103,75 +104,76 @@ export default function Orders() {
                       <th className="text-left px-4 py-3 text-muted-foreground font-medium text-xs">交易所</th>
                       <th className="text-right px-4 py-3 text-muted-foreground font-medium text-xs">倍数</th>
                       <th className="text-right px-4 py-3 text-muted-foreground font-medium text-xs">数量</th>
-                      <th className="text-right px-4 py-3 text-muted-foreground font-medium text-xs">开仓价</th>
-                      <th className="text-right px-4 py-3 text-muted-foreground font-medium text-xs">平仓价</th>
+                      <th className="text-right px-4 py-3 text-muted-foreground font-medium text-xs">成交价</th>
                       <th className="text-right px-4 py-3 text-muted-foreground font-medium text-xs">手续费</th>
+                      <th className="text-right px-4 py-3 text-muted-foreground font-medium text-xs">已实现盈亏</th>
                       <th className="text-right px-4 py-3 text-muted-foreground font-medium text-xs">净盈亏</th>
                       <th className="text-center px-4 py-3 text-muted-foreground font-medium text-xs">状态</th>
-                      <th className="text-right px-4 py-3 text-muted-foreground font-medium text-xs">开仓时间</th>
-                      <th className="text-right px-4 py-3 text-muted-foreground font-medium text-xs">平仓时间</th>
+                      <th className="text-right px-4 py-3 text-muted-foreground font-medium text-xs">时间</th>
                     </tr>
                   </thead>
                   <tbody>
                     {items.map((order) => {
-                      const actionInfo = ACTION_LABELS[order.action] || { label: order.action, isLong: true };
+                      const meta = ACTION_META[order.action] ?? { label: order.action, colorClass: "bg-muted text-muted-foreground" };
+                      const isOpen = order.action === "open_long" || order.action === "open_short";
+                      // 成交价：开仓用 openPrice，平仓用 closePrice
+                      const price = isOpen ? order.openPrice : order.closePrice;
+                      // 时间：开仓用 openTime / createdAt，平仓用 closeTime / createdAt
+                      const time = isOpen ? (order.openTime ?? order.createdAt) : (order.closeTime ?? order.createdAt);
+
                       return (
                         <tr key={order.id} className="border-b border-border/50 hover:bg-secondary/30 transition-colors">
-                          <td className="px-4 py-3 font-medium text-foreground">
-                            <div className="flex items-center gap-1.5">
-                              {order.isAbnormal && (
-                                <AlertTriangle className="w-3.5 h-3.5 text-yellow-500 shrink-0" />
-                              )}
-                              <span className="font-mono text-xs">{order.symbol}</span>
-                            </div>
-                          </td>
-                          <td className="px-4 py-3">
-                            <span className={`text-xs px-2 py-0.5 rounded font-medium ${actionInfo.isLong ? "bg-profit/20 text-profit" : "bg-loss/20 text-loss"}`}>
-                              {actionInfo.label}
+                          <td className="px-4 py-2.5 font-mono text-xs font-medium text-foreground">{order.symbol}</td>
+                          <td className="px-4 py-2.5">
+                            <span className={`text-xs px-2 py-0.5 rounded font-medium ${meta.colorClass}`}>
+                              {meta.label}
                             </span>
                           </td>
-                          <td className="px-4 py-3">
-                            <span className="text-xs text-muted-foreground">
-                              {EXCHANGE_LABELS[order.exchange] || order.exchange || "-"}
-                            </span>
+                          <td className="px-4 py-2.5 text-xs text-muted-foreground">
+                            {EXCHANGE_LABELS[order.exchange] || order.exchange || "-"}
                           </td>
-                          <td className="px-4 py-3 text-right text-xs text-muted-foreground">
+                          <td className="px-4 py-2.5 text-right text-xs text-muted-foreground">
                             {order.multiplier ? `${parseFloat(order.multiplier).toFixed(1)}x` : "-"}
                           </td>
-                          <td className="px-4 py-3 text-right font-mono text-xs">
+                          <td className="px-4 py-2.5 text-right font-mono text-xs">
                             {parseFloat(order.actualQuantity || "0").toFixed(4)}
                           </td>
-                          <td className="px-4 py-3 text-right font-mono text-xs text-muted-foreground">
-                            {order.openPrice ? parseFloat(order.openPrice).toFixed(2) : "-"}
+                          <td className="px-4 py-2.5 text-right font-mono text-xs text-muted-foreground">
+                            {price ? parseFloat(price).toFixed(2) : "-"}
                           </td>
-                          <td className="px-4 py-3 text-right font-mono text-xs text-muted-foreground">
-                            {order.closePrice ? parseFloat(order.closePrice).toFixed(2) : "-"}
-                          </td>
-                          <td className="px-4 py-3 text-right font-mono text-xs text-muted-foreground">
+                          <td className="px-4 py-2.5 text-right font-mono text-xs text-muted-foreground">
                             {order.fee ? parseFloat(order.fee).toFixed(4) : "-"}
                           </td>
-                          <td className="px-4 py-3 text-right">
-                            <PnlBadge value={order.netPnl} />
+                          <td className="px-4 py-2.5 text-right">
+                            {/* 开仓单没有已实现盈亏 */}
+                            {isOpen ? <span className="text-muted-foreground text-xs">-</span> : <PnlCell value={order.realizedPnl} />}
                           </td>
-                          <td className="px-4 py-3 text-center">
+                          <td className="px-4 py-2.5 text-right">
+                            {isOpen
+                              ? (order.status === "open"
+                                  ? <span className="text-muted-foreground text-xs">持仓中</span>
+                                  : <span className="text-muted-foreground text-xs">-</span>)
+                              : <PnlCell value={order.netPnl} />
+                            }
+                          </td>
+                          <td className="px-4 py-2.5 text-center">
                             {order.status === "open" ? (
                               <Badge className="bg-primary/15 text-primary border-0 text-xs">
-                                <span className="w-1.5 h-1.5 bg-primary rounded-full mr-1 animate-pulse" />
+                                <span className="w-1.5 h-1.5 bg-primary rounded-full mr-1 animate-pulse inline-block" />
                                 持仓中
                               </Badge>
                             ) : order.status === "closed" ? (
-                              <Badge variant="secondary" className="text-xs">已平仓</Badge>
+                              isOpen
+                                ? <Badge variant="secondary" className="text-xs">已开仓</Badge>
+                                : <Badge variant="secondary" className="text-xs">已平仓</Badge>
                             ) : order.status === "failed" ? (
                               <Badge variant="destructive" className="text-xs">失败</Badge>
                             ) : (
                               <Badge variant="outline" className="text-xs">{order.status}</Badge>
                             )}
                           </td>
-                          <td className="px-4 py-3 text-right text-xs text-muted-foreground whitespace-nowrap">
-                            {formatDateTime(order.openTime)}
-                          </td>
-                          <td className="px-4 py-3 text-right text-xs text-muted-foreground whitespace-nowrap">
-                            {formatDateTime(order.closeTime)}
+                          <td className="px-4 py-2.5 text-right text-xs text-muted-foreground whitespace-nowrap">
+                            {formatTime(time)}
                           </td>
                         </tr>
                       );

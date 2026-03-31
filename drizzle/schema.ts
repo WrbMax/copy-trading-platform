@@ -25,7 +25,7 @@ export const users = mysqlTable("users", {
   points: bigint("points", { mode: "number" }).default(0).notNull(),
   totalProfit: decimal("totalProfit", { precision: 20, scale: 8 }).default("0").notNull(),
   totalLoss: decimal("totalLoss", { precision: 20, scale: 8 }).default("0").notNull(),
-  lastPointsRedeemMonth: varchar("lastPointsRedeemMonth", { length: 7 }),
+  lastPointsRedeemMonth: varchar("lastPointsRedeemMonth", { length: 30 }),
   revenueShareRatio: decimal("revenueShareRatio", { precision: 5, scale: 2 }).default("0").notNull(),
   isActive: boolean("isActive").default(true).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),

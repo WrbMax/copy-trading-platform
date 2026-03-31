@@ -277,6 +277,12 @@ export async function disableAllUserStrategies(userId: number) {
   await db.update(userStrategies).set({ isEnabled: false }).where(eq(userStrategies.userId, userId));
 }
 
+export async function disableStrategiesByExchangeApiId(exchangeApiId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(userStrategies).set({ isEnabled: false }).where(eq(userStrategies.exchangeApiId, exchangeApiId));
+}
+
 export async function getEnabledStrategiesForSignal(signalSourceId: number) {
   const db = await getDb();
   if (!db) return [];
@@ -342,6 +348,25 @@ export async function findUserOpenOrder(userId: number, symbol: string, action: 
   return results[0] || null;
 }
 
+/**
+ * Find ALL open orders for a user on a given symbol/side.
+ * Used during close to distribute PnL across all matching open orders.
+ */
+export async function findAllUserOpenOrders(userId: number, symbol: string, action: string) {
+  const db = await getDb();
+  if (!db) return [];
+  const openAction = action === "close_long" || action === "reduce_long" ? "open_long" : "open_short";
+  const results = await db.select().from(copyOrders).where(
+    and(
+      eq(copyOrders.userId, userId),
+      eq(copyOrders.symbol, symbol),
+      eq(copyOrders.action, openAction),
+      eq(copyOrders.status, "open")
+    )
+  ).orderBy(copyOrders.createdAt); // FIFO: oldest first
+  return results;
+}
+
 export async function listCopyOrdersBySignalLog(signalLogId: number, userId?: number) {
   const db = await getDb();
   if (!db) return [];
@@ -355,11 +380,10 @@ export async function listCopyOrders(userId?: number, page = 1, limit = 20) {
   const db = await getDb();
   if (!db) return { items: [], total: 0 };
   const offset = (page - 1) * limit;
-  // Filter out cancelled orders — they are cleaned-up duplicates not meant for user display
-  const notCancelled = ne(copyOrders.status, "cancelled");
+  // Show all orders (open + close) — each row corresponds to one trade in the exchange history.
   const where = userId
-    ? and(eq(copyOrders.userId, userId), notCancelled)
-    : notCancelled;
+    ? and(eq(copyOrders.userId, userId), ne(copyOrders.status, "cancelled"))
+    : ne(copyOrders.status, "cancelled");
   const items = await db.select().from(copyOrders).where(where).orderBy(desc(copyOrders.createdAt)).limit(limit).offset(offset);
   const countQuery = await db.select({ count: sql<number>`count(*)` }).from(copyOrders).where(where);
   return { items, total: Number(countQuery[0].count) };
@@ -403,15 +427,16 @@ export async function listAllCopyOrdersWithUser(page = 1, limit = 30) {
     .orderBy(desc(copyOrders.createdAt))
     .limit(limit)
     .offset(offset);
-  const countQuery = await db.select({ count: sql<number>`count(*)` }).from(copyOrders).where(ne(copyOrders.status, "cancelled"));
+  const adminWhere = ne(copyOrders.status, "cancelled");
+  const countQuery = await db.select({ count: sql<number>`count(*)` }).from(copyOrders).where(adminWhere);
   return { items, total: Number(countQuery[0].count) };
 }
 
 export async function getUserOrderStats(userId: number) {
   const db = await getDb();
   if (!db) return { totalProfit: 0, totalLoss: 0, netPnl: 0, totalOrders: 0, openOrders: 0 };
-  // Only count open_long/open_short orders to avoid double-counting
-  // (close orders share the same PnL as their paired open orders)
+  // Only count close_long/close_short orders — these are the actual realized PnL records
+  // matching exchange "history trades" (each close = one trade with a realized PnL)
   const result = await db.select({
     totalProfit: sql<string>`COALESCE(SUM(CASE WHEN netPnl > 0 THEN netPnl ELSE 0 END), 0)`,
     totalLoss: sql<string>`COALESCE(SUM(CASE WHEN netPnl < 0 THEN ABS(netPnl) ELSE 0 END), 0)`,
@@ -421,8 +446,8 @@ export async function getUserOrderStats(userId: number) {
     and(
       eq(copyOrders.userId, userId),
       ne(copyOrders.status, "cancelled"),
-      // Only count open orders to avoid double-counting PnL with close orders
-      sql`action IN ('open_long', 'open_short')`
+      // Only count close orders — realized PnL is recorded on close trades
+      sql`action IN ('close_long', 'close_short')`
     )
   );
   const row = result[0];
@@ -603,7 +628,7 @@ export async function getAdminDashboardStats() {
   const [orderStats] = await db.select({
     totalProfit: sql<string>`COALESCE(SUM(CASE WHEN netPnl > 0 THEN netPnl ELSE 0 END), 0)`,
     abnormal: sql<number>`SUM(CASE WHEN isAbnormal = 1 THEN 1 ELSE 0 END)`,
-  }).from(copyOrders).where(sql`action IN ('open_long', 'open_short')`);
+  }).from(copyOrders).where(sql`action IN ('close_long', 'close_short')`);
   const [shareStats] = await db.select({
     total: sql<string>`COALESCE(SUM(amount), 0)`,
   }).from(revenueShareRecords);

@@ -3,11 +3,14 @@ import { z } from "zod";
 import {
   createExchangeApi,
   deleteExchangeApi,
+  disableStrategiesByExchangeApiId,
   getExchangeApiById,
   getExchangeApisByUserId,
   updateExchangeApi,
 } from "../db";
 import { decrypt, encrypt, maskApiKey } from "../crypto";
+import { testBinanceApi } from "../binance-client";
+import { testOkxApi } from "../okx-client";
 import { protectedProcedure, router } from "../_core/trpc";
 
 export const exchangeRouter = router({
@@ -67,6 +70,8 @@ export const exchangeRouter = router({
     .mutation(async ({ input, ctx }) => {
       const api = await getExchangeApiById(input.id);
       if (!api || api.userId !== ctx.user.id) throw new TRPCError({ code: "NOT_FOUND" });
+      // Disable all strategies that reference this API before deleting
+      await disableStrategiesByExchangeApiId(input.id);
       await deleteExchangeApi(input.id);
       return { success: true };
     }),
@@ -76,27 +81,49 @@ export const exchangeRouter = router({
     .mutation(async ({ input, ctx }) => {
       const api = await getExchangeApiById(input.id);
       if (!api || api.userId !== ctx.user.id) throw new TRPCError({ code: "NOT_FOUND" });
-      // Simulate connection test (real implementation would call exchange API)
       try {
         const apiKey = decrypt(api.apiKeyEncrypted);
-        // In production: call exchange API to verify credentials
-        // For now, simulate success if key is non-empty
-        const testSuccess = apiKey.length > 0;
+        const secretKey = decrypt(api.secretKeyEncrypted);
+        const passphrase = api.passphraseEncrypted ? decrypt(api.passphraseEncrypted) : "";
+        const exchange = (api.exchange || "binance").toLowerCase();
+
+        let result: { success: boolean; message: string; checks: Array<{ name: string; passed: boolean; detail: string }> };
+
+        if (exchange === "binance") {
+          result = await testBinanceApi({ apiKey, secretKey });
+        } else if (exchange === "okx") {
+          result = await testOkxApi({ apiKey, secretKey, passphrase });
+        } else {
+          // For other exchanges (bybit, bitget, gate): basic key presence check for now
+          result = {
+            success: apiKey.length > 0 && secretKey.length > 0,
+            message: apiKey.length > 0 ? "API密钥格式正确（完整连接测试暂不支持该交易所）" : "API密钥不能为空",
+            checks: [{ name: "API密钥格式", passed: apiKey.length > 0, detail: apiKey.length > 0 ? "密钥非空" : "密钥为空" }],
+          };
+        }
+
+        // Build detailed message from checks
+        const detailLines = result.checks.map(c => `${c.passed ? "✓" : "✗"} ${c.name}：${c.detail}`).join("\n");
+        const testMessage = result.success
+          ? `连接成功\n${detailLines}`
+          : `${result.message}`;
+
         await updateExchangeApi(input.id, {
-          isVerified: testSuccess,
+          isVerified: result.success,
           lastTestedAt: new Date(),
-          testStatus: testSuccess ? "success" : "failed",
-          testMessage: testSuccess ? "连接成功" : "连接失败，请检查API密钥",
+          testStatus: result.success ? "success" : "failed",
+          testMessage,
         });
-        return { success: testSuccess, message: testSuccess ? "连接成功" : "连接失败" };
-      } catch {
+        return { success: result.success, message: testMessage, checks: result.checks };
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : "连接测试异常";
         await updateExchangeApi(input.id, {
           isVerified: false,
           lastTestedAt: new Date(),
           testStatus: "failed",
-          testMessage: "连接测试异常",
+          testMessage: msg,
         });
-        return { success: false, message: "连接测试异常" };
+        return { success: false, message: msg, checks: [] };
       }
     }),
 

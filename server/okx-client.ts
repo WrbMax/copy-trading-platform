@@ -215,3 +215,75 @@ export function calcContractSize(usdtAmount: number, price: number, ctVal: numbe
   const sz = Math.floor(usdtAmount / (price * ctVal));
   return Math.max(sz, minSz);
 }
+
+/**
+ * Comprehensive OKX API test:
+ * 1. Verify API key, secret, and passphrase validity
+ * 2. Check account configuration (position mode must be long_short_mode)
+ * Returns { success, message, checks } with detailed per-check results.
+ */
+export async function testOkxApi(creds: OkxCredentials): Promise<{
+  success: boolean;
+  message: string;
+  checks: Array<{ name: string; passed: boolean; detail: string }>;
+}> {
+  const checks: Array<{ name: string; passed: boolean; detail: string }> = [];
+
+  // ── Check 1: API Key + Passphrase validity (account balance query) ──
+  let accountOk = false;
+  try {
+    const res = await okxRequest<any[]>(creds, "GET", "/api/v5/account/balance");
+    if (res.code !== "0") {
+      let detail = `API验证失败：${res.msg}`;
+      if (res.msg?.includes("50105") || res.code === "50105") detail = "Passphrase 错误，请检查API口令是否与OKX设置一致";
+      else if (res.msg?.includes("50111") || res.code === "50111") detail = "API Key 无效或已过期，请重新生成";
+      else if (res.msg?.includes("50113") || res.code === "50113") detail = "IP不在白名单，请在OKX将服务器IP加入白名单";
+      else if (res.msg?.includes("50119") || res.code === "50119") detail = "API Key 权限不足，请开启合约交易权限";
+      checks.push({ name: "API密钥与Passphrase", passed: false, detail });
+      return { success: false, message: detail, checks };
+    }
+    accountOk = true;
+    checks.push({ name: "API密钥与Passphrase", passed: true, detail: "API Key、Secret、Passphrase 验证通过" });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    let detail = `连接失败：${msg}`;
+    if (msg.includes("50105")) detail = "Passphrase 错误，请检查API口令是否与OKX设置一致";
+    else if (msg.includes("50111")) detail = "API Key 无效或已过期";
+    else if (msg.includes("50113")) detail = "IP不在白名单";
+    checks.push({ name: "API密钥与Passphrase", passed: false, detail });
+    return { success: false, message: detail, checks };
+  }
+
+  // ── Check 2: Position mode (must be long_short_mode for copy trading) ──
+  if (accountOk) {
+    try {
+      const res = await okxRequest<Array<{ posMode: string }>>(creds, "GET", "/api/v5/account/config");
+      if (res.code !== "0") {
+        checks.push({ name: "持仓模式", passed: false, detail: `账户配置查询失败：${res.msg}` });
+      } else {
+        const posMode = res.data?.[0]?.posMode;
+        if (posMode === "long_short_mode") {
+          checks.push({ name: "持仓模式", passed: true, detail: "双向持仓模式（买卖模式），符合跟单要求" });
+        } else {
+          checks.push({
+            name: "持仓模式",
+            passed: false,
+            detail: "当前为单向持仓模式，请在OKX合约页面 → 设置 → 持仓模式，切换为「双向持仓」后重新测试",
+          });
+        }
+      }
+    } catch {
+      checks.push({ name: "持仓模式", passed: false, detail: "持仓模式查询失败，请确认已开通合约账户" });
+    }
+  }
+
+  const allPassed = checks.every((c) => c.passed);
+  const failedChecks = checks.filter((c) => !c.passed);
+
+  if (allPassed) {
+    return { success: true, message: "连接成功，所有检测项通过", checks };
+  } else {
+    const summary = failedChecks.map((c) => c.detail).join("；");
+    return { success: false, message: summary, checks };
+  }
+}

@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
-import { Zap, TrendingUp, Settings, AlertCircle, Info } from "lucide-react";
+import { Zap, TrendingUp, Settings, AlertCircle, Info, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { Link } from "wouter";
 
@@ -41,7 +41,9 @@ export default function Strategy() {
   const openDialog = (sourceId: number) => {
     const existing = myStrategies?.find((s) => s.signalSourceId === sourceId);
     setSelectedSource(sourceId);
-    setSelectedApi(existing?.exchangeApiId?.toString() || (activeApis[0]?.id?.toString() ?? ""));
+    // If the existing strategy's API still exists in the active list, pre-select it; otherwise default to first active API
+    const existingApiStillValid = existing?.exchangeApi && activeApis.some(a => a.id === existing.exchangeApiId);
+    setSelectedApi(existingApiStillValid ? existing.exchangeApiId.toString() : (activeApis[0]?.id?.toString() ?? ""));
     const m = parseFloat(existing?.multiplier || "1");
     setMultiplier(m);
     setMultiplierInput(m.toString());
@@ -84,31 +86,48 @@ export default function Strategy() {
           <div>
             <h2 className="text-base font-semibold mb-3">我的策略</h2>
             <div className="space-y-3">
-              {myStrategies.map((s) => (
-                <Card key={s.id} className="bg-card border-border">
-                  <CardContent className="p-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 bg-primary/15 rounded-lg flex items-center justify-center text-primary text-xs font-bold">
-                          {s.signalSource?.symbol?.slice(0, 3) || "?"}
+              {myStrategies.map((s) => {
+                const apiMissing = !s.exchangeApi;
+                return (
+                  <Card key={s.id} className={`bg-card border-border ${apiMissing ? 'border-destructive/40' : ''}`}>
+                    <CardContent className="p-4">
+                      {/* API Missing Warning */}
+                      {apiMissing && (
+                        <div className="flex items-start gap-2 p-2.5 mb-3 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive">
+                          <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                          <div>
+                            <p className="text-xs font-medium">API已失效，策略已停止运行</p>
+                            <p className="text-xs mt-0.5 opacity-80">请重新绑定API并在下方重新配置策略</p>
+                          </div>
                         </div>
-                        <div>
-                          <p className="font-medium text-sm">{s.signalSource?.name}</p>
-                          <p className="text-xs text-muted-foreground">{s.signalSource?.tradingPair} · {s.exchangeApi?.exchange} · 数量 {s.multiplier}x</p>
+                      )}
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className={`w-9 h-9 rounded-lg flex items-center justify-center text-xs font-bold ${apiMissing ? 'bg-destructive/15 text-destructive' : 'bg-primary/15 text-primary'}`}>
+                            {s.signalSource?.symbol?.slice(0, 3) || "?"}
+                          </div>
+                          <div>
+                            <p className="font-medium text-sm">{s.signalSource?.name}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {s.signalSource?.tradingPair} · {apiMissing ? <span className="text-destructive">API已删除</span> : s.exchangeApi?.exchange} · 数量 {s.multiplier}x
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          {!apiMissing && (
+                            <Switch checked={s.isEnabled} onCheckedChange={(v) => {
+                              setStrategyMutation.mutate({ signalSourceId: s.signalSourceId, exchangeApiId: s.exchangeApiId, multiplier: parseFloat(s.multiplier), isEnabled: v });
+                            }} />
+                          )}
+                          <Button size="sm" variant="ghost" onClick={() => openDialog(s.signalSourceId)}>
+                            <Settings className="w-4 h-4" />
+                          </Button>
                         </div>
                       </div>
-                      <div className="flex items-center gap-3">
-                        <Switch checked={s.isEnabled} onCheckedChange={(v) => {
-                          setStrategyMutation.mutate({ signalSourceId: s.signalSourceId, exchangeApiId: s.exchangeApiId, multiplier: parseFloat(s.multiplier), isEnabled: v });
-                        }} />
-                        <Button size="sm" variant="ghost" onClick={() => openDialog(s.signalSourceId)}>
-                          <Settings className="w-4 h-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
+                    </CardContent>
+                  </Card>
+                );
+              })}
             </div>
           </div>
         )}
@@ -119,6 +138,7 @@ export default function Strategy() {
           <div className="grid md:grid-cols-2 gap-4">
             {sources?.map((source) => {
               const myStrategy = myStrategies?.find((s) => s.signalSourceId === source.id);
+              const apiMissing = myStrategy && !myStrategy.exchangeApi;
               return (
                 <Card key={source.id} className="bg-card border-border hover:border-primary/40 transition-colors">
                   <CardHeader className="pb-3">
@@ -132,7 +152,11 @@ export default function Strategy() {
                           <p className="text-xs text-muted-foreground mt-0.5">{source.tradingPair}</p>
                         </div>
                       </div>
-                      {myStrategy?.isEnabled ? (
+                      {apiMissing ? (
+                        <Badge variant="destructive" className="text-xs">
+                          <AlertTriangle className="w-3 h-3 mr-1" />API失效
+                        </Badge>
+                      ) : myStrategy?.isEnabled ? (
                         <Badge className="bg-primary/15 text-primary border-0 text-xs">
                           <span className="w-1.5 h-1.5 bg-primary rounded-full mr-1 animate-pulse" />运行中
                         </Badge>
@@ -156,7 +180,7 @@ export default function Strategy() {
                     {/* Always allow opening dialog - no disabled state */}
                     <Button className="w-full" size="sm" onClick={() => openDialog(source.id)}>
                       <Zap className="w-4 h-4 mr-1" />
-                      {myStrategy ? "修改设置" : "开启策略"}
+                      {apiMissing ? "重新配置" : myStrategy ? "修改设置" : "开启策略"}
                     </Button>
                   </CardContent>
                 </Card>

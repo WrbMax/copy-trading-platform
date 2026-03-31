@@ -8,16 +8,20 @@ import { Switch } from "@/components/ui/switch";
 import { AlertTriangle, ChevronLeft, ChevronRight, Info } from "lucide-react";
 import { toast } from "sonner";
 
-const ACTION_LABELS: Record<string, string> = {
-  open_long: "开多", open_short: "开空", close_long: "平多", close_short: "平空", close_all: "全平",
+const ACTION_META: Record<string, { label: string; colorClass: string }> = {
+  open_long:   { label: "开多", colorClass: "bg-profit/20 text-profit" },
+  open_short:  { label: "开空", colorClass: "bg-loss/20 text-loss" },
+  close_long:  { label: "平多", colorClass: "bg-profit/10 text-profit/70" },
+  close_short: { label: "平空", colorClass: "bg-loss/10 text-loss/70" },
+  close_all:   { label: "全平", colorClass: "bg-muted text-muted-foreground" },
 };
 
 const STATUS_LABELS: Record<string, { label: string; className: string }> = {
-  pending: { label: "待执行", className: "bg-yellow-500/15 text-yellow-500 border-0" },
-  open: { label: "持仓中", className: "bg-primary/15 text-primary border-0" },
-  closed: { label: "已平仓", className: "bg-muted text-muted-foreground border-0" },
-  failed: { label: "失败", className: "bg-loss/15 text-loss border-0" },
-  cancelled: { label: "已取消", className: "bg-muted text-muted-foreground border-0" },
+  pending:  { label: "待执行", className: "bg-yellow-500/15 text-yellow-500 border-0" },
+  open:     { label: "持仓中", className: "bg-primary/15 text-primary border-0" },
+  closed:   { label: "已平仓", className: "bg-muted text-muted-foreground border-0" }, // 平仓单用，开仓单会单独判断
+  failed:   { label: "失败",   className: "bg-loss/15 text-loss border-0" },
+  cancelled:{ label: "已取消", className: "bg-muted text-muted-foreground border-0" },
 };
 
 const EXCHANGE_LABELS: Record<string, string> = {
@@ -46,7 +50,7 @@ export default function AdminOrders() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold">订单监控</h1>
-            <p className="text-muted-foreground text-sm mt-1">监控所有用户的跟单订单状态（共 {total} 条）</p>
+            <p className="text-muted-foreground text-sm mt-1">每笔开仓和平仓均单独展示，与交易所历史成交一一对应（共 {total} 条）</p>
           </div>
           <div className="flex items-center gap-2 text-sm">
             <span className="text-muted-foreground">仅看异常</span>
@@ -60,15 +64,22 @@ export default function AdminOrders() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border">
-                    {["用户", "信号源", "交易所", "交易对", "方向", "数量", "倍数", "净盈亏", "状态", "异常", "时间"].map((h) => (
-                      <th key={h} className="text-left px-3 py-3 text-muted-foreground font-medium whitespace-nowrap">{h}</th>
+                    {["用户", "信号源", "交易所", "交易对", "方向", "数量", "倍数", "成交价", "手续费", "已实现盈亏", "净盈亏", "状态", "异常", "时间"].map((h) => (
+                      <th key={h} className="text-left px-3 py-3 text-muted-foreground font-medium whitespace-nowrap text-xs">{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {items.map((order: any) => {
                     const st = STATUS_LABELS[order.status] ?? { label: order.status, className: "" };
+                    const meta = ACTION_META[order.action] ?? { label: order.action, colorClass: "bg-muted text-muted-foreground" };
+                    const isOpen = order.action === "open_long" || order.action === "open_short";
+                    const price = isOpen ? order.openPrice : order.closePrice;
+                    const time = isOpen ? (order.openTime ?? order.createdAt) : (order.closeTime ?? order.createdAt);
                     const isExpanded = expandedId === order.id;
+                    const netPnl = order.netPnl ? parseFloat(order.netPnl) : null;
+                    const realizedPnl = order.realizedPnl ? parseFloat(order.realizedPnl) : null;
+
                     return (
                       <>
                         <tr
@@ -78,32 +89,57 @@ export default function AdminOrders() {
                         >
                           <td className="px-3 py-2.5">
                             <div className="flex flex-col">
-                              <span className="font-medium text-foreground">{order.userName || "未知"}</span>
+                              <span className="font-medium text-foreground text-xs">{order.userName || "未知"}</span>
                               <span className="text-xs text-muted-foreground">ID:{order.userId}</span>
                             </div>
                           </td>
                           <td className="px-3 py-2.5 text-xs text-muted-foreground">{order.signalSourceName || "-"}</td>
+                          <td className="px-3 py-2.5 text-xs font-medium">{EXCHANGE_LABELS[order.exchange] || order.exchange}</td>
+                          <td className="px-3 py-2.5 font-mono text-xs text-foreground">{order.symbol}</td>
                           <td className="px-3 py-2.5">
-                            <span className="text-xs font-medium">{EXCHANGE_LABELS[order.exchange] || order.exchange}</span>
-                          </td>
-                          <td className="px-3 py-2.5 font-medium text-foreground">{order.symbol}</td>
-                          <td className="px-3 py-2.5">
-                            <span className={`text-xs px-1.5 py-0.5 rounded ${order.action?.includes("long") ? "bg-profit/20 text-profit" : "bg-loss/20 text-loss"}`}>
-                              {ACTION_LABELS[order.action] || order.action}
+                            <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${meta.colorClass}`}>
+                              {meta.label}
                             </span>
                           </td>
-                          <td className="px-3 py-2.5 text-muted-foreground font-mono text-xs">{parseFloat(order.actualQuantity || "0").toFixed(4)}</td>
-                          <td className="px-3 py-2.5 text-muted-foreground text-xs">{parseFloat(order.multiplier || "1").toFixed(1)}x</td>
+                          <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">
+                            {parseFloat(order.actualQuantity || "0").toFixed(4)}
+                          </td>
+                          <td className="px-3 py-2.5 text-xs text-muted-foreground">
+                            {parseFloat(order.multiplier || "1").toFixed(1)}x
+                          </td>
+                          <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">
+                            {price ? parseFloat(price).toFixed(2) : "-"}
+                          </td>
+                          <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">
+                            {order.fee ? parseFloat(order.fee).toFixed(4) : "-"}
+                          </td>
+                          {/* 已实现盈亏：只有平仓单才有 */}
                           <td className="px-3 py-2.5">
-                            {order.netPnl ? (
-                              <span className={parseFloat(order.netPnl) >= 0 ? "text-profit font-semibold" : "text-loss font-semibold"}>
-                                {parseFloat(order.netPnl) >= 0 ? "+" : ""}{parseFloat(order.netPnl).toFixed(2)}
+                            {isOpen ? (
+                              <span className="text-xs text-muted-foreground">-</span>
+                            ) : realizedPnl !== null ? (
+                              <span className={`font-semibold text-xs ${realizedPnl >= 0 ? "text-profit" : "text-loss"}`}>
+                                {realizedPnl >= 0 ? "+" : ""}{realizedPnl.toFixed(4)}
                               </span>
-                            ) : "-"}
+                            ) : <span className="text-xs text-muted-foreground">-</span>}
+                          </td>
+                          {/* 净盈亏：只有平仓单才有 */}
+                          <td className="px-3 py-2.5">
+                            {isOpen ? (
+                              order.status === "open"
+                                ? <span className="text-xs text-muted-foreground">持仓中</span>
+                                : <span className="text-xs text-muted-foreground">-</span>
+                            ) : netPnl !== null ? (
+                              <span className={`font-semibold text-xs ${netPnl >= 0 ? "text-profit" : "text-loss"}`}>
+                                {netPnl >= 0 ? "+" : ""}{netPnl.toFixed(4)}
+                              </span>
+                            ) : <span className="text-xs text-muted-foreground">-</span>}
                           </td>
                           <td className="px-3 py-2.5">
-                            <Badge className={`text-xs ${st.className}`}>{st.label}</Badge>
-                          </td>
+                             <Badge className={`text-xs ${st.className}`}>
+                               {isOpen && order.status === "closed" ? "已开仓" : st.label}
+                             </Badge>
+                           </td>
                           <td className="px-3 py-2.5">
                             <button
                               onClick={(e) => { e.stopPropagation(); markMutation.mutate({ orderId: order.id, isAbnormal: !order.isAbnormal }); }}
@@ -113,51 +149,45 @@ export default function AdminOrders() {
                             </button>
                           </td>
                           <td className="px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">
-                            {order.createdAt ? new Date(order.createdAt).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }) : "-"}
+                            {time ? new Date(time).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }) : "-"}
                           </td>
                         </tr>
                         {/* Expanded detail row */}
                         {isExpanded && (
                           <tr key={`${order.id}-detail`} className="bg-secondary/20">
-                            <td colSpan={11} className="px-4 py-3">
-                              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
-                                <div>
-                                  <p className="text-muted-foreground">开仓价</p>
-                                  <p className="font-semibold">{order.openPrice ? parseFloat(order.openPrice).toFixed(4) : "-"}</p>
-                                </div>
-                                <div>
-                                  <p className="text-muted-foreground">平仓价</p>
-                                  <p className="font-semibold">{order.closePrice ? parseFloat(order.closePrice).toFixed(4) : "-"}</p>
-                                </div>
+                            <td colSpan={14} className="px-4 py-3">
+                              <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs">
                                 <div>
                                   <p className="text-muted-foreground">信号数量</p>
                                   <p className="font-semibold">{parseFloat(order.signalQuantity || "0").toFixed(4)}</p>
                                 </div>
                                 <div>
+                                  <p className="text-muted-foreground">开仓价</p>
+                                  <p className="font-semibold font-mono">{order.openPrice ? parseFloat(order.openPrice).toFixed(4) : "-"}</p>
+                                </div>
+                                <div>
+                                  <p className="text-muted-foreground">平仓价</p>
+                                  <p className="font-semibold font-mono">{order.closePrice ? parseFloat(order.closePrice).toFixed(4) : "-"}</p>
+                                </div>
+                                <div>
                                   <p className="text-muted-foreground">交易所订单号</p>
-                                  <p className="font-mono">{order.exchangeOrderId || "-"}</p>
+                                  <p className="font-mono text-xs break-all">{order.exchangeOrderId || "-"}</p>
                                 </div>
                                 <div>
-                                  <p className="text-muted-foreground">手续费</p>
-                                  <p className="font-semibold">{order.fee ? parseFloat(order.fee).toFixed(4) : "-"}</p>
-                                </div>
-                                <div>
-                                  <p className="text-muted-foreground">已实现盈亏</p>
-                                  <p className="font-semibold">{order.realizedPnl ? parseFloat(order.realizedPnl).toFixed(4) : "-"}</p>
-                                </div>
-                                <div>
-                                  <p className="text-muted-foreground">开仓时间</p>
-                                  <p>{order.openTime ? new Date(order.openTime).toLocaleString("zh-CN") : "-"}</p>
-                                </div>
-                                <div>
-                                  <p className="text-muted-foreground">平仓时间</p>
-                                  <p>{order.closeTime ? new Date(order.closeTime).toLocaleString("zh-CN") : "-"}</p>
+                                  <p className="text-muted-foreground">订单ID</p>
+                                  <p className="font-mono">{order.id}</p>
                                 </div>
                               </div>
                               {order.errorMessage && (
                                 <div className="mt-2 flex items-start gap-2 p-2 rounded bg-loss/10 text-loss text-xs">
                                   <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
                                   <span>{order.errorMessage}</span>
+                                </div>
+                              )}
+                              {order.abnormalNote && (
+                                <div className="mt-2 flex items-start gap-2 p-2 rounded bg-yellow-500/10 text-yellow-600 text-xs">
+                                  <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                                  <span>{order.abnormalNote}</span>
                                 </div>
                               )}
                             </td>

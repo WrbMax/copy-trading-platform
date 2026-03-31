@@ -24,6 +24,7 @@ import {
   updateCopyOrder,
   listCopyOrdersBySignalLog,
   findUserOpenOrder,
+  findAllUserOpenOrders,
   getUserById,
   updateUser,
   disableAllUserStrategies,
@@ -301,28 +302,54 @@ async function executeCopyTrades(sourceId: number, change: PositionChange) {
     let sz: string;
     let exchangeOrderId: string | undefined;
 
+    // ── 统一仓位计算：先换算为 ETH 数量，再转换为各交易所合约数 ──
+    // 信号源是 OKX，ctVal = 0.1 ETH/张
+    // baseEthQty = 信号张数 × 信号ctVal × 用户倍数  （单位：ETH）
+    const baseEthQty = change.contractsDelta * ctVal * multiplier;
+
     if (userExchange === "binance") {
+      // Binance 直接用 ETH 数量下单
       const precision = binanceInfo?.quantityPrecision ?? 3;
-      const ethQty = change.contractsDelta * ctVal * multiplier;
       const minQty = parseFloat(binanceInfo?.minQty ?? "0.001");
-      const roundedQty = Math.max(minQty, Math.floor(ethQty * Math.pow(10, precision)) / Math.pow(10, precision));
+      const roundedQty = Math.max(minQty, Math.floor(baseEthQty * Math.pow(10, precision)) / Math.pow(10, precision));
       sz = roundedQty.toFixed(precision);
-      console.log(`[CopyEngine] Binance calc: user=${us.userId}, contracts=${change.contractsDelta}, ctVal=${ctVal}, mult=${multiplier}, ethQty=${ethQty}, finalSz=${sz}`);
+      console.log(`[CopyEngine] Binance calc: user=${us.userId}, contracts=${change.contractsDelta}, ctVal=${ctVal}, mult=${multiplier}, baseEthQty=${baseEthQty}, finalSz=${sz}`);
     } else if (userExchange === "bybit") {
+      // Bybit 也直接用 ETH 数量下单
       const bybitSymbol = toBybitSymbol(change.instId);
       const bybitInfo = await getBybitInstrument(bybitSymbol);
       const step = parseFloat(bybitInfo?.qtyStep ?? "0.001");
       const minQty = parseFloat(bybitInfo?.minOrderQty ?? "0.001");
-      const ethQty = change.contractsDelta * ctVal * multiplier;
-      const rounded = Math.max(minQty, Math.floor(ethQty / step) * step);
+      const rounded = Math.max(minQty, Math.floor(baseEthQty / step) * step);
       const decimals = step.toString().includes(".") ? step.toString().split(".")[1].length : 0;
       sz = rounded.toFixed(decimals);
+      console.log(`[CopyEngine] Bybit calc: user=${us.userId}, contracts=${change.contractsDelta}, ctVal=${ctVal}, mult=${multiplier}, baseEthQty=${baseEthQty}, finalSz=${sz}`);
     } else if (userExchange === "bitget") {
-      sz = Math.max(1, Math.round(change.contractsDelta * multiplier)).toString();
+      // Bitget USDT-M 永续：1张 = 0.01 ETH
+      const bitgetCtVal = 0.01;
+      const bitgetContracts = Math.floor(baseEthQty / bitgetCtVal);
+      const minSzBitget = 1;
+      sz = Math.max(minSzBitget, bitgetContracts).toString();
+      console.log(`[CopyEngine] Bitget calc: user=${us.userId}, contracts=${change.contractsDelta}, ctVal=${ctVal}, mult=${multiplier}, baseEthQty=${baseEthQty}, bitgetContracts=${bitgetContracts}, finalSz=${sz}`);
     } else if (userExchange === "gate") {
-      sz = Math.max(1, Math.round(change.contractsDelta * multiplier)).toString();
+      // Gate.io ETH_USDT：1张 = 0.01 ETH（需从合约信息获取）
+      const gateInstrument = await getGateInstrument(toGateContract(change.instId));
+      const gateCtVal = gateInstrument ? parseFloat(gateInstrument.quanto_multiplier ?? "0.01") : 0.01;
+      const gateContracts = Math.floor(baseEthQty / gateCtVal);
+      const minSzGate = 1;
+      sz = Math.max(minSzGate, gateContracts).toString();
+      console.log(`[CopyEngine] Gate calc: user=${us.userId}, contracts=${change.contractsDelta}, ctVal=${ctVal}, mult=${multiplier}, baseEthQty=${baseEthQty}, gateCtVal=${gateCtVal}, gateContracts=${gateContracts}, finalSz=${sz}`);
     } else {
-      sz = Math.max(1, Math.round(change.contractsDelta * multiplier)).toString();
+      // OKX：信号源也是 OKX，ctVal 相同（0.1 ETH/张）
+      // OKX合约数 = baseEthQty / okxCtVal = contractsDelta × multiplier
+      const minSz = instrument ? parseFloat(instrument.minSz) : 0.01;
+      const lotSz = instrument ? parseFloat(instrument.lotSz) : 0.01;
+      const rawContracts = baseEthQty / ctVal; // = contractsDelta * multiplier
+      const roundedContracts = Math.floor(rawContracts / lotSz) * lotSz;
+      const finalContracts = Math.max(minSz, roundedContracts);
+      const lotDecimals = lotSz.toString().includes(".") ? lotSz.toString().split(".")[1].length : 0;
+      sz = finalContracts.toFixed(lotDecimals);
+      console.log(`[CopyEngine] OKX calc: user=${us.userId}, contracts=${change.contractsDelta}, ctVal=${ctVal}, mult=${multiplier}, baseEthQty=${baseEthQty}, rawContracts=${rawContracts}, finalSz=${sz}`);
     }
 
     // Insert pending order record
@@ -460,8 +487,8 @@ async function executeCopyTrades(sourceId: number, change: PositionChange) {
         closeTime: new Date(),
       });
 
-      // Wait briefly for exchange settlement
-      await new Promise(r => setTimeout(r, 2000));
+      // Note: getBinanceOrderDetail has built-in retry logic (up to 3 attempts)
+      // No need for a fixed wait here.
 
       try {
         let closePrice = 0;
@@ -515,40 +542,39 @@ async function executeCopyTrades(sourceId: number, change: PositionChange) {
           realizedPnl = parseFloat(detail.pnl) || 0;
         }
 
-        // Find the matching open order
-        const openOrder = await findUserOpenOrder(us.userId, change.instId, change.action);
+        // Find ALL matching open orders for this user/symbol/side
+        const allOpenOrders = await findAllUserOpenOrders(us.userId, change.instId, change.action);
+        const openOrder = allOpenOrders[0] || null; // Keep for backward compat (close order record)
 
-        // Use exchange-provided realizedPnl if available; otherwise fallback to manual calculation
-        let rawPnl = realizedPnl;
-        if (rawPnl === 0 && openOrder && closePrice > 0) {
-          const openPrice = parseFloat(openOrder.openPrice || "0");
-          const qty = parseFloat(openOrder.actualQuantity || sz);
-          // For Binance/Bybit: qty is in base asset (e.g. ETH)
-          // For OKX/Bitget/Gate: qty is in contracts, multiply by ctVal
-          let pnlQty = qty;
-          if (userExchange === "okx" || userExchange === "bitget" || userExchange === "gate") {
-            pnlQty = qty * ctVal;
-          }
-          if (change.action === "close_long" || change.action === "reduce_long") {
-            rawPnl = (closePrice - openPrice) * pnlQty;
-          } else {
-            rawPnl = (openPrice - closePrice) * pnlQty;
-          }
-        }
+        // Always use exchange-provided realizedPnl directly — never calculate manually
+        const rawPnl = realizedPnl;
 
         const netPnl = rawPnl - fee;
 
-        if (openOrder) {
-          // Update the original open order to closed with PnL
-          await updateCopyOrder(openOrder.id, {
-            closePrice: closePrice.toFixed(8),
-            closeTime: new Date(),
-            closeOrderId: exchangeOrderId,
-            realizedPnl: rawPnl.toFixed(8),
-            fee: fee.toFixed(8),
-            netPnl: netPnl.toFixed(8),
-            status: "closed",
-          });
+        // ── Distribute PnL across ALL open orders proportionally ──
+        if (allOpenOrders.length > 0) {
+          // Calculate total quantity across all open orders
+          const totalQty = allOpenOrders.reduce((sum, o) => sum + parseFloat(o.actualQuantity || "0"), 0);
+
+          for (const openOrd of allOpenOrders) {
+            const ordQty = parseFloat(openOrd.actualQuantity || "0");
+            // Proportion of this order relative to total open quantity
+            const ratio = totalQty > 0 ? ordQty / totalQty : 1 / allOpenOrders.length;
+            const ordRawPnl = rawPnl * ratio;
+            const ordFee = fee * ratio;
+            const ordNetPnl = ordRawPnl - ordFee;
+
+            await updateCopyOrder(openOrd.id, {
+              closePrice: closePrice.toFixed(8),
+              closeTime: new Date(),
+              closeOrderId: exchangeOrderId,
+              realizedPnl: ordRawPnl.toFixed(8),
+              fee: ordFee.toFixed(8),
+              netPnl: ordNetPnl.toFixed(8),
+              status: "closed",
+            });
+            console.log(`[CopyEngine] 📊 User ${us.userId} order ${openOrd.id}: ratio=${ratio.toFixed(4)}, netPnl=${ordNetPnl.toFixed(4)}`);
+          }
         }
 
         // Update the close order record with price and PnL info
@@ -560,21 +586,13 @@ async function executeCopyTrades(sourceId: number, change: PositionChange) {
           netPnl: netPnl.toFixed(8),
         });
 
-        // Update user profit stats
-        const trader = await getUserById(us.userId);
-        if (trader) {
-          if (netPnl > 0) {
-            const newProfit = parseFloat(trader.totalProfit || "0") + netPnl;
-            await updateUser(us.userId, { totalProfit: newProfit.toFixed(8) });
-          } else if (netPnl < 0) {
-            const newLoss = parseFloat(trader.totalLoss || "0") + Math.abs(netPnl);
-            await updateUser(us.userId, { totalLoss: newLoss.toFixed(8) });
-          }
-        }
+        // Note: totalProfit/totalLoss on users table is NOT updated here.
+        // The frontend stats are computed live from copy_orders (open_long/open_short only)
+        // via getUserOrderStats(), which is the single source of truth.
 
-        console.log(`[CopyEngine] 📊 User ${us.userId}: realizedPnl=${rawPnl.toFixed(4)}, fee=${fee.toFixed(4)}, netPnl=${netPnl.toFixed(4)}, closePrice=${closePrice}`);
+        console.log(`[CopyEngine] 📊 User ${us.userId}: totalPnl=${rawPnl.toFixed(4)}, fee=${fee.toFixed(4)}, netPnl=${netPnl.toFixed(4)}, closePrice=${closePrice}, openOrders=${allOpenOrders.length}`);
 
-        // Trigger revenue share for profitable orders
+        // Trigger revenue share for profitable orders (use total netPnl)
         const revenueOrderId = openOrder ? openOrder.id : orderId;
         if (netPnl > 0) {
           try {
@@ -594,12 +612,65 @@ async function executeCopyTrades(sourceId: number, change: PositionChange) {
         console.error(`[CopyEngine] ⚠️ PnL finalization failed for user ${us.userId}: ${pnlMsg}`);
       }
     } else {
-      // Open order: set to 'open' status
+      // Open order: set to 'open' status (use signal avgPx as initial price)
       await updateCopyOrder(orderId, {
         status: "open",
         exchangeOrderId: exchangeOrderId,
         openTime: new Date(),
       });
+
+      // Async: query actual fill price from exchange and update openPrice
+      if (exchangeOrderId) {
+        (async () => {
+          try {
+            let actualOpenPrice: number | null = null;
+
+            if (userExchange === "binance") {
+              const symbol = toBinanceSymbol(change.instId);
+              const detail = await getBinanceOrderDetail(
+                { apiKey: decrypt(api.apiKeyEncrypted), secretKey: decrypt(api.secretKeyEncrypted) },
+                symbol, exchangeOrderId
+              );
+              actualOpenPrice = parseFloat(detail.avgPrice) || null;
+            } else if (userExchange === "bybit") {
+              const symbol = toBybitSymbol(change.instId);
+              const detail = await getBybitOrderDetail(
+                { apiKey: decrypt(api.apiKeyEncrypted), secretKey: decrypt(api.secretKeyEncrypted) },
+                symbol, exchangeOrderId
+              );
+              actualOpenPrice = parseFloat(detail.avgPrice) || null;
+            } else if (userExchange === "bitget") {
+              const symbol = toBitgetSymbol(change.instId);
+              const detail = await getBitgetOrderDetail(
+                { apiKey: decrypt(api.apiKeyEncrypted), secretKey: decrypt(api.secretKeyEncrypted), passphrase: api.passphraseEncrypted ? decrypt(api.passphraseEncrypted) : "" },
+                symbol, exchangeOrderId
+              );
+              actualOpenPrice = parseFloat(detail.avgPrice) || null;
+            } else if (userExchange === "gate") {
+              const detail = await getGateOrderDetail(
+                { apiKey: decrypt(api.apiKeyEncrypted), secretKey: decrypt(api.secretKeyEncrypted) },
+                exchangeOrderId
+              );
+              actualOpenPrice = parseFloat(detail.fillPrice) || null;
+            } else {
+              // OKX
+              const detail = await getOkxOrderDetail(
+                { apiKey: decrypt(api.apiKeyEncrypted), secretKey: decrypt(api.secretKeyEncrypted), passphrase: api.passphraseEncrypted ? decrypt(api.passphraseEncrypted) : "" },
+                change.instId, exchangeOrderId
+              );
+              actualOpenPrice = parseFloat(detail.avgPx) || null;
+            }
+
+            if (actualOpenPrice && actualOpenPrice > 0) {
+              await updateCopyOrder(orderId, { openPrice: actualOpenPrice.toFixed(8) });
+              console.log(`[CopyEngine] 📌 User ${us.userId} order ${orderId}: actual openPrice=${actualOpenPrice}`);
+            }
+          } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : String(e);
+            console.warn(`[CopyEngine] ⚠️ Failed to fetch actual open price for user ${us.userId} order ${orderId}: ${msg}`);
+          }
+        })();
+      }
     }
     return true;
   }

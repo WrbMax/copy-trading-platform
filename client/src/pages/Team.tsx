@@ -2,11 +2,227 @@ import { useState } from "react";
 import UserLayout from "@/components/UserLayout";
 import { trpc } from "@/lib/trpc";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Users, TrendingUp, UserPlus, Percent, Check, X } from "lucide-react";
+import { Users, TrendingUp, UserPlus, Percent, Check, X, BarChart2, ChevronLeft, ChevronRight, Eye } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Link } from "wouter";
 import { toast } from "sonner";
+import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+
+// ─── 订单展示辅助组件 ──────────────────────────────────────────────────────────
+
+function PnlCell({ value }: { value: string | null | undefined }) {
+  if (!value) return <span className="text-muted-foreground text-xs">-</span>;
+  const n = parseFloat(value);
+  if (isNaN(n)) return <span className="text-muted-foreground text-xs">-</span>;
+  if (n > 0) return <span className="text-profit font-semibold text-xs">+{n.toFixed(4)}</span>;
+  if (n < 0) return <span className="text-loss font-semibold text-xs">{n.toFixed(4)}</span>;
+  return <span className="text-muted-foreground text-xs">0.0000</span>;
+}
+
+function formatTime(d: Date | string | null | undefined) {
+  if (!d) return "-";
+  return new Date(d).toLocaleString("zh-CN", {
+    month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+  });
+}
+
+const ACTION_META: Record<string, { label: string; colorClass: string }> = {
+  open_long:   { label: "开多", colorClass: "bg-profit/20 text-profit" },
+  open_short:  { label: "开空", colorClass: "bg-loss/20 text-loss" },
+  close_long:  { label: "平多", colorClass: "bg-profit/10 text-profit/70" },
+  close_short: { label: "平空", colorClass: "bg-loss/10 text-loss/70" },
+  close_all:   { label: "全平", colorClass: "bg-muted text-muted-foreground" },
+};
+
+const EXCHANGE_LABELS: Record<string, string> = {
+  okx: "OKX", binance: "Binance", bybit: "Bybit", bitget: "Bitget", gate: "Gate.io",
+};
+
+// ─── 成员交易记录弹窗 ──────────────────────────────────────────────────────────
+
+function MemberOrdersDialog({
+  inviteeId,
+  open,
+  onClose,
+}: {
+  inviteeId: number | null;
+  open: boolean;
+  onClose: () => void;
+}) {
+  const [page, setPage] = useState(1);
+
+  const { data, isLoading } = trpc.user.inviteeMemberOrders.useQuery(
+    { inviteeId: inviteeId ?? 0, page, limit: 20 },
+    { enabled: open && inviteeId !== null }
+  );
+
+  const items = data?.items ?? [];
+  const total = data?.total ?? 0;
+  const totalPages = Math.ceil(total / 20);
+  const stats = data?.stats;
+  const inviteeName = data?.inviteeName ?? "";
+
+  // 切换成员时重置分页
+  const handleOpenChange = (v: boolean) => {
+    if (!v) { onClose(); setPage(1); }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent className="max-w-5xl w-full max-h-[90vh] flex flex-col bg-card border-border">
+        <DialogHeader className="shrink-0">
+          <DialogTitle className="flex items-center gap-2 text-base">
+            <BarChart2 className="w-4 h-4 text-primary" />
+            {inviteeName} 的交易记录
+          </DialogTitle>
+        </DialogHeader>
+
+        {/* 统计摘要 */}
+        {stats && (
+          <div className="grid grid-cols-4 gap-3 shrink-0">
+            {[
+              { label: "总交易笔数", value: stats.totalOrders, unit: "笔" },
+              { label: "持仓中", value: stats.openOrders, unit: "笔", color: "text-primary" },
+              { label: "累计盈利", value: stats.totalProfit.toFixed(2), unit: "USDT", color: "text-profit" },
+              {
+                label: "净盈亏",
+                value: `${stats.netPnl >= 0 ? "+" : ""}${stats.netPnl.toFixed(4)}`,
+                unit: "USDT",
+                color: stats.netPnl >= 0 ? "text-profit" : "text-loss",
+              },
+            ].map((s) => (
+              <div key={s.label} className="bg-secondary/30 rounded-lg p-3">
+                <p className="text-xs text-muted-foreground">{s.label}</p>
+                <p className={`text-lg font-bold mt-0.5 ${s.color ?? "text-foreground"}`}>
+                  {s.value} <span className="text-xs font-normal text-muted-foreground">{s.unit}</span>
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* 订单表格 */}
+        <div className="flex-1 overflow-auto min-h-0">
+          {isLoading ? (
+            <div className="flex items-center justify-center py-16">
+              <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+            </div>
+          ) : items.length === 0 ? (
+            <div className="text-center py-16 text-muted-foreground">
+              <BarChart2 className="w-10 h-10 mx-auto mb-3 opacity-30" />
+              <p className="text-sm">暂无交易记录</p>
+            </div>
+          ) : (
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 bg-card z-10">
+                <tr className="border-b border-border bg-secondary/20">
+                  <th className="text-left px-3 py-2.5 text-muted-foreground font-medium text-xs">交易对</th>
+                  <th className="text-left px-3 py-2.5 text-muted-foreground font-medium text-xs">方向</th>
+                  <th className="text-left px-3 py-2.5 text-muted-foreground font-medium text-xs">交易所</th>
+                  <th className="text-right px-3 py-2.5 text-muted-foreground font-medium text-xs">倍数</th>
+                  <th className="text-right px-3 py-2.5 text-muted-foreground font-medium text-xs">数量</th>
+                  <th className="text-right px-3 py-2.5 text-muted-foreground font-medium text-xs">成交价</th>
+                  <th className="text-right px-3 py-2.5 text-muted-foreground font-medium text-xs">手续费</th>
+                  <th className="text-right px-3 py-2.5 text-muted-foreground font-medium text-xs">已实现盈亏</th>
+                  <th className="text-right px-3 py-2.5 text-muted-foreground font-medium text-xs">净盈亏</th>
+                  <th className="text-center px-3 py-2.5 text-muted-foreground font-medium text-xs">状态</th>
+                  <th className="text-right px-3 py-2.5 text-muted-foreground font-medium text-xs">时间</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((order: any) => {
+                  const meta = ACTION_META[order.action] ?? { label: order.action, colorClass: "bg-muted text-muted-foreground" };
+                  const isOpen = order.action === "open_long" || order.action === "open_short";
+                  const price = isOpen ? order.openPrice : order.closePrice;
+                  const time = isOpen ? (order.openTime ?? order.createdAt) : (order.closeTime ?? order.createdAt);
+
+                  return (
+                    <tr key={order.id} className="border-b border-border/50 hover:bg-secondary/30 transition-colors">
+                      <td className="px-3 py-2 font-mono text-xs font-medium text-foreground">{order.symbol}</td>
+                      <td className="px-3 py-2">
+                        <span className={`text-xs px-2 py-0.5 rounded font-medium ${meta.colorClass}`}>
+                          {meta.label}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 text-xs text-muted-foreground">
+                        {EXCHANGE_LABELS[order.exchange] || order.exchange || "-"}
+                      </td>
+                      <td className="px-3 py-2 text-right text-xs text-muted-foreground">
+                        {order.multiplier ? `${parseFloat(order.multiplier).toFixed(1)}x` : "-"}
+                      </td>
+                      <td className="px-3 py-2 text-right font-mono text-xs">
+                        {parseFloat(order.actualQuantity || "0").toFixed(4)}
+                      </td>
+                      <td className="px-3 py-2 text-right font-mono text-xs text-muted-foreground">
+                        {price ? parseFloat(price).toFixed(2) : "-"}
+                      </td>
+                      <td className="px-3 py-2 text-right font-mono text-xs text-muted-foreground">
+                        {order.fee ? parseFloat(order.fee).toFixed(4) : "-"}
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        {isOpen ? <span className="text-muted-foreground text-xs">-</span> : <PnlCell value={order.realizedPnl} />}
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        {isOpen
+                          ? (order.status === "open"
+                              ? <span className="text-muted-foreground text-xs">持仓中</span>
+                              : <span className="text-muted-foreground text-xs">-</span>)
+                          : <PnlCell value={order.netPnl} />
+                        }
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        {order.status === "open" ? (
+                          <Badge className="bg-primary/15 text-primary border-0 text-xs">
+                            <span className="w-1.5 h-1.5 bg-primary rounded-full mr-1 animate-pulse inline-block" />
+                            持仓中
+                          </Badge>
+                        ) : order.status === "closed" ? (
+                          <Badge variant="secondary" className="text-xs">已平仓</Badge>
+                        ) : order.status === "failed" ? (
+                          <Badge variant="destructive" className="text-xs">失败</Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-xs">{order.status}</Badge>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-right text-xs text-muted-foreground whitespace-nowrap">
+                        {formatTime(time)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {/* 分页 */}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-center gap-3 shrink-0 pt-2 border-t border-border">
+            <Button variant="outline" size="sm" className="bg-transparent h-7 w-7 p-0"
+              onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}>
+              <ChevronLeft className="w-4 h-4" />
+            </Button>
+            <span className="text-sm text-muted-foreground">{page} / {totalPages}</span>
+            <Button variant="outline" size="sm" className="bg-transparent h-7 w-7 p-0"
+              onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages}>
+              <ChevronRight className="w-4 h-4" />
+            </Button>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── 主页面 ────────────────────────────────────────────────────────────────────
 
 export default function Team() {
   const utils = trpc.useUtils();
@@ -16,6 +232,9 @@ export default function Team() {
 
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editRatio, setEditRatio] = useState("");
+
+  // 查看交易记录弹窗状态
+  const [viewingInviteeId, setViewingInviteeId] = useState<number | null>(null);
 
   const setRatioMutation = trpc.user.setInviteeRevenueShare.useMutation({
     onSuccess: () => {
@@ -135,16 +354,28 @@ export default function Team() {
                           {new Date(inv.createdAt).toLocaleDateString()}
                         </td>
                         <td className="px-4 py-3">
-                          {editingId !== inv.id && (
+                          <div className="flex items-center gap-1">
+                            {/* 查看交易记录按钮 */}
                             <Button
                               size="sm"
                               variant="ghost"
-                              className="h-7 text-xs"
-                              onClick={() => { setEditingId(inv.id); setEditRatio(inv.revenueShareRatio || "0"); }}
+                              className="h-7 text-xs text-muted-foreground hover:text-foreground"
+                              onClick={() => setViewingInviteeId(inv.id)}
                             >
-                              设置分成
+                              <Eye className="w-3.5 h-3.5 mr-1" />
+                              交易记录
                             </Button>
-                          )}
+                            {editingId !== inv.id && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 text-xs"
+                                onClick={() => { setEditingId(inv.id); setEditRatio(inv.revenueShareRatio || "0"); }}
+                              >
+                                设置分成
+                              </Button>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -158,6 +389,13 @@ export default function Team() {
           </CardContent>
         </Card>
       </div>
+
+      {/* 成员交易记录弹窗 */}
+      <MemberOrdersDialog
+        inviteeId={viewingInviteeId}
+        open={viewingInviteeId !== null}
+        onClose={() => setViewingInviteeId(null)}
+      />
     </UserLayout>
   );
 }
