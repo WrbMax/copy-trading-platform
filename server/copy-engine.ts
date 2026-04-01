@@ -311,8 +311,11 @@ async function executeCopyTrades(sourceId: number, change: PositionChange) {
       // Binance 直接用 ETH 数量下单
       const precision = binanceInfo?.quantityPrecision ?? 3;
       const minQty = parseFloat(binanceInfo?.minQty ?? "0.001");
-      const roundedQty = Math.max(minQty, Math.floor(baseEthQty * Math.pow(10, precision)) / Math.pow(10, precision));
-      sz = roundedQty.toFixed(precision);
+      // 统一：不做额外取整，直接用 baseEthQty（除非低于最小值）
+      let finalQty = baseEthQty;
+      if (finalQty < minQty) finalQty = minQty;
+      // 只做精度截断，不额外向下取整
+      sz = finalQty.toFixed(precision);
       console.log(`[CopyEngine] Binance calc: user=${us.userId}, contracts=${change.contractsDelta}, ctVal=${ctVal}, mult=${multiplier}, baseEthQty=${baseEthQty}, finalSz=${sz}`);
     } else if (userExchange === "bybit") {
       // Bybit 也直接用 ETH 数量下单
@@ -341,15 +344,16 @@ async function executeCopyTrades(sourceId: number, change: PositionChange) {
       console.log(`[CopyEngine] Gate calc: user=${us.userId}, contracts=${change.contractsDelta}, ctVal=${ctVal}, mult=${multiplier}, baseEthQty=${baseEthQty}, gateCtVal=${gateCtVal}, gateContracts=${gateContracts}, finalSz=${sz}`);
     } else {
       // OKX：信号源也是 OKX，ctVal 相同（0.1 ETH/张）
-      // OKX合约数 = baseEthQty / okxCtVal = contractsDelta × multiplier
+      // 统一：直接用 baseEthQty 换算为张数，不额外向下取整
       const minSz = instrument ? parseFloat(instrument.minSz) : 0.01;
       const lotSz = instrument ? parseFloat(instrument.lotSz) : 0.01;
-      const rawContracts = baseEthQty / ctVal; // = contractsDelta * multiplier
-      const roundedContracts = Math.floor(rawContracts / lotSz) * lotSz;
-      const finalContracts = Math.max(minSz, roundedContracts);
+      let rawContracts = baseEthQty / ctVal; // = contractsDelta * multiplier
+      // 只做 lotSz 对齐（四舍五入，而非向下取整）
+      let alignedContracts = Math.round(rawContracts / lotSz) * lotSz;
+      if (alignedContracts < minSz) alignedContracts = minSz;
       const lotDecimals = lotSz.toString().includes(".") ? lotSz.toString().split(".")[1].length : 0;
-      sz = finalContracts.toFixed(lotDecimals);
-      console.log(`[CopyEngine] OKX calc: user=${us.userId}, contracts=${change.contractsDelta}, ctVal=${ctVal}, mult=${multiplier}, baseEthQty=${baseEthQty}, rawContracts=${rawContracts}, finalSz=${sz}`);
+      sz = alignedContracts.toFixed(lotDecimals);
+      console.log(`[CopyEngine] OKX calc: user=${us.userId}, contracts=${change.contractsDelta}, ctVal=${ctVal}, mult=${multiplier}, baseEthQty=${baseEthQty}, rawContracts=${rawContracts}, alignedContracts=${alignedContracts}, finalSz=${sz}`);
     }
 
     // Insert pending order record

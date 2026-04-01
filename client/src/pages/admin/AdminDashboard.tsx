@@ -1,20 +1,53 @@
 import AdminLayout from "@/components/AdminLayout";
 import { trpc } from "@/lib/trpc";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Users, CreditCard, TrendingUp, ListOrdered, Zap, Coins } from "lucide-react";
+import { Users, CreditCard, TrendingUp, TrendingDown, ListOrdered, Wallet, ArrowDownLeft, ArrowUpRight } from "lucide-react";
 
 export default function AdminDashboard() {
   const { data: stats } = trpc.user.adminDashboard.useQuery();
 
-  const cards = [
+  // 用户维度
+  const userCards = [
     { label: "注册用户总数", value: stats?.totalUsers ?? 0, unit: "人", icon: Users, color: "text-primary" },
-    { label: "总充值金额", value: `${(stats?.totalDeposits ?? 0).toFixed(2)}`, unit: "USDT", icon: CreditCard, color: "text-profit" },
+    { label: "用户累计盈利", value: `${(stats?.totalProfit ?? 0).toFixed(2)}`, unit: "USDT", icon: TrendingUp, color: "text-profit" },
+    { label: "用户累计亏损", value: `${(stats?.totalLoss ?? 0).toFixed(2)}`, unit: "USDT", icon: TrendingDown, color: "text-loss" },
     { label: "异常订单", value: stats?.abnormalOrders ?? 0, unit: "笔", icon: ListOrdered, color: "text-loss" },
-    { label: "平台总盈利", value: `${(stats?.totalProfit ?? 0).toFixed(2)}`, unit: "USDT", icon: TrendingUp, color: "text-profit" },
+  ];
+
+  // 平台收入维度
+  const revenueCards = [
+    {
+      label: "平台服务费收入",
+      value: `${(stats?.totalDeducted ?? 0).toFixed(2)}`,
+      unit: "USDT",
+      icon: Wallet,
+      color: "text-profit",
+      desc: "从用户余额扣除的服务费总额",
+    },
+    {
+      label: "分给推荐人",
+      value: `${(stats?.totalRevenueShare ?? 0).toFixed(2)}`,
+      unit: "USDT",
+      icon: ArrowUpRight,
+      color: "text-yellow-500",
+      desc: "分成给各级邀请人的总额",
+    },
+    {
+      label: "平台净收入",
+      value: `${(stats?.platformNetRevenue ?? 0).toFixed(2)}`,
+      unit: "USDT",
+      icon: TrendingUp,
+      color: "text-primary",
+      desc: "服务费收入 − 推荐人分成",
+    },
+  ];
+
+  // 资金维度
+  const fundCards = [
+    { label: "总充值金额", value: `${(stats?.totalDeposits ?? 0).toFixed(2)}`, unit: "USDT", icon: ArrowDownLeft, color: "text-profit" },
+    { label: "总提现金额", value: `${(stats?.totalWithdrawals ?? 0).toFixed(2)}`, unit: "USDT", icon: ArrowUpRight, color: "text-primary" },
     { label: "待审充值", value: stats?.pendingDeposits ?? 0, unit: "笔", icon: CreditCard, color: "text-yellow-500" },
     { label: "待审提现", value: stats?.pendingWithdrawals ?? 0, unit: "笔", icon: CreditCard, color: "text-yellow-500" },
-    { label: "总收益分成", value: `${(stats?.totalRevenueShare ?? 0).toFixed(2)}`, unit: "USDT", icon: TrendingUp, color: "text-primary" },
-    { label: "总提现金额", value: `${(stats?.totalWithdrawals ?? 0).toFixed(2)}`, unit: "USDT", icon: Zap, color: "text-primary" },
   ];
 
   return (
@@ -25,21 +58,68 @@ export default function AdminDashboard() {
           <p className="text-muted-foreground text-sm mt-1">平台整体运营数据概览</p>
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {cards.map((c) => (
-            <Card key={c.label} className="bg-card border-border">
-              <CardContent className="p-5">
-                <div className="flex items-start justify-between">
-                  <div>
-                    <p className="text-xs text-muted-foreground">{c.label}</p>
-                    <p className={`text-2xl font-bold mt-1 ${c.color}`}>{c.value}</p>
-                    <p className="text-xs text-muted-foreground">{c.unit}</p>
+        {/* 平台收入 */}
+        <div>
+          <h2 className="text-sm font-semibold text-muted-foreground mb-3 uppercase tracking-wide">平台收入</h2>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {revenueCards.map((c) => (
+              <Card key={c.label} className="bg-card border-border">
+                <CardContent className="p-5">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <p className="text-xs text-muted-foreground">{c.label}</p>
+                      <p className={`text-2xl font-bold mt-1 ${c.color}`}>{c.value}</p>
+                      <p className="text-xs text-muted-foreground">{c.unit}</p>
+                      <p className="text-xs text-muted-foreground/60 mt-1">{c.desc}</p>
+                    </div>
+                    <c.icon className={`w-5 h-5 ${c.color} opacity-60`} />
                   </div>
-                  <c.icon className={`w-5 h-5 ${c.color} opacity-60`} />
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
+
+        {/* 用户数据 */}
+        <div>
+          <h2 className="text-sm font-semibold text-muted-foreground mb-3 uppercase tracking-wide">用户数据</h2>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {userCards.map((c) => (
+              <Card key={c.label} className="bg-card border-border">
+                <CardContent className="p-5">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <p className="text-xs text-muted-foreground">{c.label}</p>
+                      <p className={`text-2xl font-bold mt-1 ${c.color}`}>{c.value}</p>
+                      <p className="text-xs text-muted-foreground">{c.unit}</p>
+                    </div>
+                    <c.icon className={`w-5 h-5 ${c.color} opacity-60`} />
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
+
+        {/* 资金数据 */}
+        <div>
+          <h2 className="text-sm font-semibold text-muted-foreground mb-3 uppercase tracking-wide">资金数据</h2>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {fundCards.map((c) => (
+              <Card key={c.label} className="bg-card border-border">
+                <CardContent className="p-5">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <p className="text-xs text-muted-foreground">{c.label}</p>
+                      <p className={`text-2xl font-bold mt-1 ${c.color}`}>{c.value}</p>
+                      <p className="text-xs text-muted-foreground">{c.unit}</p>
+                    </div>
+                    <c.icon className={`w-5 h-5 ${c.color} opacity-60`} />
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
         </div>
 
         <div className="grid md:grid-cols-2 gap-4">

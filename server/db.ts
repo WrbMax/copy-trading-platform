@@ -481,10 +481,17 @@ export async function listRevenueShareRecords(userId?: number, page = 1, limit =
 export async function getUserRevenueShareStats(userId: number) {
   const db = await getDb();
   if (!db) return { totalReceived: 0, totalDeducted: 0 };
+  // 以平仓订单为唯一数据源
   const received = await db.select({ total: sql<string>`COALESCE(SUM(amount), 0)` })
     .from(revenueShareRecords).where(eq(revenueShareRecords.recipientId, userId));
   const deducted = await db.select({ total: sql<string>`COALESCE(SUM(revenueShareDeducted), 0)` })
-    .from(copyOrders).where(eq(copyOrders.userId, userId));
+    .from(copyOrders).where(
+      and(
+        eq(copyOrders.userId, userId),
+        sql`action IN ('close_long', 'close_short')`,
+        eq(copyOrders.status, 'closed')
+      )
+    );
   return {
     totalReceived: parseFloat(received[0].total || "0"),
     totalDeducted: parseFloat(deducted[0].total || "0"),
@@ -625,22 +632,35 @@ export async function getAdminDashboardStats() {
     total: sql<string>`COALESCE(SUM(amount), 0)`,
     pending: sql<number>`SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END)`,
   }).from(withdrawals);
+  // 以平仓订单为唯一数据源
   const [orderStats] = await db.select({
     totalProfit: sql<string>`COALESCE(SUM(CASE WHEN netPnl > 0 THEN netPnl ELSE 0 END), 0)`,
+    totalLoss: sql<string>`COALESCE(SUM(CASE WHEN netPnl < 0 THEN ABS(netPnl) ELSE 0 END), 0)`,
+    totalDeducted: sql<string>`COALESCE(SUM(revenueShareDeducted), 0)`,
     abnormal: sql<number>`SUM(CASE WHEN isAbnormal = 1 THEN 1 ELSE 0 END)`,
-  }).from(copyOrders).where(sql`action IN ('close_long', 'close_short')`);
+  }).from(copyOrders).where(sql`action IN ('close_long', 'close_short') AND status = 'closed'`);
+  // 分给推荐人：只统计平仓订单关联的分成记录
   const [shareStats] = await db.select({
-    total: sql<string>`COALESCE(SUM(amount), 0)`,
-  }).from(revenueShareRecords);
+    total: sql<string>`COALESCE(SUM(${revenueShareRecords.amount}), 0)`,
+  }).from(revenueShareRecords)
+    .innerJoin(copyOrders, eq(revenueShareRecords.copyOrderId, copyOrders.id))
+    .where(sql`${copyOrders.action} IN ('close_long', 'close_short') AND ${copyOrders.status} = 'closed'`);
+  const totalDeducted = parseFloat(orderStats.totalDeducted || "0");
+  const totalRevenueShare = parseFloat(shareStats.total || "0");
   return {
     totalUsers: Number(userCount.count),
     totalDeposits: parseFloat(depositStats.total || "0"),
     pendingDeposits: Number(depositStats.pending || 0),
     totalWithdrawals: parseFloat(withdrawalStats.total || "0"),
     pendingWithdrawals: Number(withdrawalStats.pending || 0),
+    // 用户维度
     totalProfit: parseFloat(orderStats.totalProfit || "0"),
+    totalLoss: parseFloat(orderStats.totalLoss || "0"),
+    // 平台收入维度
+    totalDeducted,                              // 从用户余额扣除的服务费总额
+    totalRevenueShare,                          // 分给推荐人的分成总额
+    platformNetRevenue: totalDeducted - totalRevenueShare, // 平台净收入
     abnormalOrders: Number(orderStats.abnormal || 0),
-    totalRevenueShare: parseFloat(shareStats.total || "0"),
   };
 }
 
@@ -660,16 +680,24 @@ export async function getTeamStats(userId: number) {
     currentLevelIds = nextLevel.map(m => m.id);
   }
   const totalCount = allTeamIds.length;
-  // Team profit (orders from ALL levels)
+  // 团队盈亏：以平仓订单为唯一数据源
   let teamProfit = 0;
   if (allTeamIds.length > 0) {
-    const [profitResult] = await db.select({ total: sql<string>`COALESCE(SUM(CASE WHEN netPnl > 0 THEN netPnl ELSE 0 END), 0)` })
-      .from(copyOrders).where(sql`userId IN (${allTeamIds.join(",")}) AND action IN ('open_long', 'open_short')`);
+    const [profitResult] = await db.select({ total: sql<string>`COALESCE(SUM(netPnl), 0)` })
+      .from(copyOrders).where(sql`userId IN (${allTeamIds.join(",")}) AND action IN ('close_long', 'close_short') AND status = 'closed'`);
     teamProfit = parseFloat(profitResult.total || "0");
   }
-  // Revenue share received by this user
-  const [shareResult] = await db.select({ total: sql<string>`COALESCE(SUM(amount), 0)` })
-    .from(revenueShareRecords).where(eq(revenueShareRecords.recipientId, userId));
+  // 收到的分成：只统计平仓订单关联的分成记录
+  const [shareResult] = await db.select({ total: sql<string>`COALESCE(SUM(${revenueShareRecords.amount}), 0)` })
+    .from(revenueShareRecords)
+    .innerJoin(copyOrders, eq(revenueShareRecords.copyOrderId, copyOrders.id))
+    .where(
+      and(
+        eq(revenueShareRecords.recipientId, userId),
+        sql`${copyOrders.action} IN ('close_long', 'close_short')`,
+        eq(copyOrders.status, 'closed')
+      )
+    );
   return {
     directCount: Number(direct.count),
     totalCount,
