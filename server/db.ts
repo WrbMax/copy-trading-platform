@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, lt, ne, sql } from "drizzle-orm";
+import { and, desc, eq, gte, like, lt, ne, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   InsertUser,
@@ -124,6 +124,26 @@ export async function listUsers(page = 1, limit = 20) {
   const offset = (page - 1) * limit;
   const items = await db.select().from(users).orderBy(desc(users.createdAt)).limit(limit).offset(offset);
   const [{ count }] = await db.select({ count: sql<number>`count(*)` }).from(users);
+  return { items, total: Number(count) };
+}
+
+export async function searchUsers(keyword: string, page = 1, limit = 20) {
+  const db = await getDb();
+  if (!db) return { items: [], total: 0 };
+  const offset = (page - 1) * limit;
+  // Search by ID if keyword is numeric, otherwise search name/email
+  const isNumeric = /^\d+$/.test(keyword.trim());
+  let where;
+  if (isNumeric) {
+    where = eq(users.id, parseInt(keyword.trim()));
+  } else {
+    where = or(
+      like(users.name, `%${keyword}%`),
+      like(users.email, `%${keyword}%`)
+    );
+  }
+  const items = await db.select().from(users).where(where).orderBy(desc(users.createdAt)).limit(limit).offset(offset);
+  const [{ count }] = await db.select({ count: sql<number>`count(*)` }).from(users).where(where);
   return { items, total: Number(count) };
 }
 
@@ -437,11 +457,12 @@ export async function getUserOrderStats(userId: number) {
   if (!db) return { totalProfit: 0, totalLoss: 0, netPnl: 0, totalOrders: 0, openOrders: 0 };
   // Only count close_long/close_short orders — these are the actual realized PnL records
   // matching exchange "history trades" (each close = one trade with a realized PnL)
-  const result = await db.select({
+  // Stats for closed orders (realized PnL + revenue share deducted)
+  const closeResult = await db.select({
     totalProfit: sql<string>`COALESCE(SUM(CASE WHEN netPnl > 0 THEN netPnl ELSE 0 END), 0)`,
     totalLoss: sql<string>`COALESCE(SUM(CASE WHEN netPnl < 0 THEN ABS(netPnl) ELSE 0 END), 0)`,
     totalOrders: sql<number>`COUNT(*)`,
-    openOrders: sql<number>`SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END)`,
+    totalRevenueShare: sql<string>`COALESCE(SUM(COALESCE(revenueShareDeducted, 0)), 0)`,
   }).from(copyOrders).where(
     and(
       eq(copyOrders.userId, userId),
@@ -450,10 +471,21 @@ export async function getUserOrderStats(userId: number) {
       sql`action IN ('close_long', 'close_short')`
     )
   );
-  const row = result[0];
+  // Count open positions separately (open_long/open_short with status='open')
+  const openResult = await db.select({
+    openOrders: sql<number>`COUNT(*)`,
+  }).from(copyOrders).where(
+    and(
+      eq(copyOrders.userId, userId),
+      eq(copyOrders.status, "open"),
+      sql`action IN ('open_long', 'open_short')`
+    )
+  );
+  const row = closeResult[0];
   const totalProfit = parseFloat(row.totalProfit || "0");
   const totalLoss = parseFloat(row.totalLoss || "0");
-  return { totalProfit, totalLoss, netPnl: totalProfit - totalLoss, totalOrders: Number(row.totalOrders), openOrders: Number(row.openOrders) };
+  const totalRevenueShare = parseFloat(row.totalRevenueShare || "0");
+  return { totalProfit, totalLoss, netPnl: totalProfit - totalLoss, totalOrders: Number(row.totalOrders), openOrders: Number(openResult[0].openOrders), totalRevenueShare };
 }
 
 // ─── Revenue Share ─────────────────────────────────────────────────────────────
