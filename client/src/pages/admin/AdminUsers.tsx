@@ -7,10 +7,13 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
-import { Search, ChevronLeft, ChevronRight, Settings, Plus, Minus, ChevronDown, ChevronUp, Users } from "lucide-react";
+import {
+  Search, ChevronLeft, ChevronRight, Settings, Plus, Minus,
+  ChevronDown, ChevronUp, Users, Wallet, BarChart2, ArrowDownCircle, ArrowUpCircle, X
+} from "lucide-react";
 import { toast } from "sonner";
 
-// Sub-component: renders invitees for a given userId
+// ─── 邀请成员展开行 ────────────────────────────────────────────────────────────
 function InviteesRow({ userId, colSpan }: { userId: number; colSpan: number }) {
   const { data: invitees, isLoading } = trpc.user.adminGetInvitees.useQuery({ userId });
   return (
@@ -58,36 +61,367 @@ function InviteesRow({ userId, colSpan }: { userId: number; colSpan: number }) {
   );
 }
 
+// ─── 充提记录弹窗 ──────────────────────────────────────────────────────────────
+function FundRecordsDialog({ user, onClose }: { user: any; onClose: () => void }) {
+  const [tab, setTab] = useState<"transactions" | "deposits" | "withdrawals">("transactions");
+  const [page, setPage] = useState(1);
+
+  const txQuery = trpc.user.adminGetUserFundTransactions.useQuery(
+    { userId: user.id, page, limit: 20 },
+    { enabled: tab === "transactions" }
+  );
+  const depositQuery = trpc.user.adminGetUserDeposits.useQuery(
+    { userId: user.id, page, limit: 20 },
+    { enabled: tab === "deposits" }
+  );
+  const withdrawalQuery = trpc.user.adminGetUserWithdrawals.useQuery(
+    { userId: user.id, page, limit: 20 },
+    { enabled: tab === "withdrawals" }
+  );
+
+  const currentData =
+    tab === "transactions" ? txQuery.data :
+    tab === "deposits" ? depositQuery.data :
+    withdrawalQuery.data;
+
+  const items = currentData?.items ?? [];
+  const total = currentData?.total ?? 0;
+  const totalPages = Math.ceil(total / 20);
+
+  const txTypeLabel: Record<string, string> = {
+    deposit: "充值",
+    withdrawal: "提现",
+    revenue_share_out: "服务费扣除",
+    revenue_share_in: "分成收入",
+    adjustment: "手动调整",
+    points_exchange: "积分兑换",
+  };
+
+  const txTypeColor: Record<string, string> = {
+    deposit: "text-emerald-400",
+    withdrawal: "text-red-400",
+    revenue_share_out: "text-orange-400",
+    revenue_share_in: "text-emerald-400",
+    adjustment: "text-blue-400",
+    points_exchange: "text-purple-400",
+  };
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="bg-card border-border max-w-4xl max-h-[85vh] overflow-hidden flex flex-col">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Wallet className="w-4 h-4" />
+            #{user.id} {user.name} — 资金记录
+          </DialogTitle>
+        </DialogHeader>
+
+        {/* Tab 切换 */}
+        <div className="flex gap-1 border-b border-border pb-2">
+          {[
+            { key: "transactions", label: "全部流水" },
+            { key: "deposits", label: "充值记录" },
+            { key: "withdrawals", label: "提现记录" },
+          ].map((t) => (
+            <Button
+              key={t.key}
+              size="sm"
+              variant={tab === t.key ? "default" : "ghost"}
+              onClick={() => { setTab(t.key as any); setPage(1); }}
+              className="text-xs"
+            >
+              {t.label}
+            </Button>
+          ))}
+        </div>
+
+        <div className="overflow-y-auto flex-1">
+          {tab === "transactions" && (
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 bg-card">
+                <tr className="border-b border-border">
+                  {["ID", "类型", "金额", "备注", "时间"].map((h) => (
+                    <th key={h} className="text-left px-3 py-2 text-muted-foreground font-medium">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((item: any) => (
+                  <tr key={item.id} className="border-b border-border/40 hover:bg-secondary/20">
+                    <td className="px-3 py-2 text-muted-foreground">#{item.id}</td>
+                    <td className="px-3 py-2">
+                      <span className={txTypeColor[item.type] || "text-foreground"}>
+                        {txTypeLabel[item.type] || item.type}
+                      </span>
+                    </td>
+                    <td className={`px-3 py-2 font-semibold ${parseFloat(item.amount) >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                      {parseFloat(item.amount) >= 0 ? "+" : ""}{parseFloat(item.amount).toFixed(4)} USDT
+                    </td>
+                    <td className="px-3 py-2 text-muted-foreground max-w-xs truncate">{item.note || "-"}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{new Date(item.createdAt).toLocaleString()}</td>
+                  </tr>
+                ))}
+                {items.length === 0 && (
+                  <tr><td colSpan={5} className="text-center py-8 text-muted-foreground">暂无记录</td></tr>
+                )}
+              </tbody>
+            </table>
+          )}
+
+          {tab === "deposits" && (
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 bg-card">
+                <tr className="border-b border-border">
+                  {["ID", "金额", "链", "状态", "TxHash", "时间"].map((h) => (
+                    <th key={h} className="text-left px-3 py-2 text-muted-foreground font-medium">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((item: any) => (
+                  <tr key={item.id} className="border-b border-border/40 hover:bg-secondary/20">
+                    <td className="px-3 py-2 text-muted-foreground">#{item.id}</td>
+                    <td className="px-3 py-2 font-semibold text-emerald-400">+{parseFloat(item.amount).toFixed(4)} USDT</td>
+                    <td className="px-3 py-2 text-muted-foreground">{item.chain || "BSC"}</td>
+                    <td className="px-3 py-2">
+                      <Badge variant={item.status === "confirmed" ? "default" : item.status === "pending" ? "secondary" : "destructive"} className="text-xs">
+                        {item.status === "confirmed" ? "已确认" : item.status === "pending" ? "待审核" : item.status}
+                      </Badge>
+                    </td>
+                    <td className="px-3 py-2 text-muted-foreground font-mono text-xs max-w-[120px] truncate" title={item.txHash}>{item.txHash || "-"}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{new Date(item.createdAt).toLocaleString()}</td>
+                  </tr>
+                ))}
+                {items.length === 0 && (
+                  <tr><td colSpan={6} className="text-center py-8 text-muted-foreground">暂无充值记录</td></tr>
+                )}
+              </tbody>
+            </table>
+          )}
+
+          {tab === "withdrawals" && (
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 bg-card">
+                <tr className="border-b border-border">
+                  {["ID", "申请金额", "手续费", "实际到账", "地址", "状态", "时间"].map((h) => (
+                    <th key={h} className="text-left px-3 py-2 text-muted-foreground font-medium">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((item: any) => (
+                  <tr key={item.id} className="border-b border-border/40 hover:bg-secondary/20">
+                    <td className="px-3 py-2 text-muted-foreground">#{item.id}</td>
+                    <td className="px-3 py-2 font-semibold text-red-400">-{parseFloat(item.amount).toFixed(4)} USDT</td>
+                    <td className="px-3 py-2 text-muted-foreground">{parseFloat(item.fee || "0").toFixed(4)}</td>
+                    <td className="px-3 py-2 text-foreground">{parseFloat(item.netAmount || "0").toFixed(4)} USDT</td>
+                    <td className="px-3 py-2 text-muted-foreground font-mono text-xs max-w-[120px] truncate" title={item.address}>{item.address || "-"}</td>
+                    <td className="px-3 py-2">
+                      <Badge variant={item.status === "completed" ? "default" : item.status === "pending" ? "secondary" : "destructive"} className="text-xs">
+                        {item.status === "completed" ? "已完成" : item.status === "pending" ? "待审核" : item.status === "rejected" ? "已拒绝" : item.status}
+                      </Badge>
+                    </td>
+                    <td className="px-3 py-2 text-muted-foreground">{new Date(item.createdAt).toLocaleString()}</td>
+                  </tr>
+                ))}
+                {items.length === 0 && (
+                  <tr><td colSpan={7} className="text-center py-8 text-muted-foreground">暂无提现记录</td></tr>
+                )}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {totalPages > 1 && (
+          <div className="flex items-center justify-center gap-3 pt-2 border-t border-border">
+            <Button variant="outline" size="sm" className="bg-transparent" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}>
+              <ChevronLeft className="w-4 h-4" />
+            </Button>
+            <span className="text-xs text-muted-foreground">{page} / {totalPages}（共 {total} 条）</span>
+            <Button variant="outline" size="sm" className="bg-transparent" onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages}>
+              <ChevronRight className="w-4 h-4" />
+            </Button>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── 交易订单弹窗 ──────────────────────────────────────────────────────────────
+function OrdersDialog({ user, onClose }: { user: any; onClose: () => void }) {
+  const [page, setPage] = useState(1);
+  const { data, isLoading } = trpc.user.adminGetUserOrders.useQuery({ userId: user.id, page, limit: 20 });
+
+  const items = data?.items ?? [];
+  const stats = data?.stats;
+  const total = data?.total ?? 0;
+  const totalPages = Math.ceil(total / 20);
+
+  const actionLabel: Record<string, { text: string; color: string }> = {
+    open_long:  { text: "开多", color: "text-emerald-400" },
+    open_short: { text: "开空", color: "text-red-400" },
+    close_long: { text: "平多", color: "text-emerald-400" },
+    close_short:{ text: "平空", color: "text-red-400" },
+  };
+
+  const statusLabel: Record<string, { text: string; variant: any }> = {
+    open:   { text: "持仓中", variant: "default" },
+    closed: { text: "已平仓", variant: "secondary" },
+    failed: { text: "失败", variant: "destructive" },
+  };
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="bg-card border-border max-w-5xl max-h-[85vh] overflow-hidden flex flex-col">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <BarChart2 className="w-4 h-4" />
+            #{user.id} {user.name} — 交易订单
+          </DialogTitle>
+        </DialogHeader>
+
+        {/* 统计摘要 */}
+        {stats && (
+          <div className="grid grid-cols-4 gap-3 pb-3 border-b border-border">
+            <div className="bg-secondary/30 rounded-lg p-3 text-center">
+              <p className="text-xs text-muted-foreground">总订单</p>
+              <p className="text-lg font-bold">{stats.totalOrders}</p>
+            </div>
+            <div className="bg-secondary/30 rounded-lg p-3 text-center">
+              <p className="text-xs text-muted-foreground">持仓中</p>
+              <p className="text-lg font-bold text-blue-400">{stats.openOrders}</p>
+            </div>
+            <div className="bg-secondary/30 rounded-lg p-3 text-center">
+              <p className="text-xs text-muted-foreground">累计盈利</p>
+              <p className={`text-lg font-bold ${parseFloat(stats.totalProfit || "0") >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                {parseFloat(stats.totalProfit || "0").toFixed(2)} U
+              </p>
+            </div>
+            <div className="bg-secondary/30 rounded-lg p-3 text-center">
+              <p className="text-xs text-muted-foreground">平台扣费</p>
+              <p className="text-lg font-bold text-orange-400">{parseFloat(stats.totalRevenueShare || "0").toFixed(2)} U</p>
+            </div>
+          </div>
+        )}
+
+        <div className="overflow-y-auto flex-1">
+          {isLoading ? (
+            <p className="text-center py-8 text-muted-foreground">加载中...</p>
+          ) : (
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 bg-card">
+                <tr className="border-b border-border">
+                  {["ID", "交易所", "方向", "数量", "倍数", "成交价", "手续费", "已实现盈亏", "净盈亏", "平台扣费", "状态", "时间"].map((h) => (
+                    <th key={h} className="text-left px-2 py-2 text-muted-foreground font-medium whitespace-nowrap">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((item: any) => {
+                  const action = actionLabel[item.action] || { text: item.action, color: "text-foreground" };
+                  const isCloseAction = item.action === "close_long" || item.action === "close_short";
+                  const statusInfo = isCloseAction && item.status === "closed"
+                    ? { text: "已平仓", variant: "secondary" as any }
+                    : statusLabel[item.status] || { text: item.status, variant: "secondary" as any };
+                  return (
+                    <tr key={item.id} className="border-b border-border/40 hover:bg-secondary/20">
+                      <td className="px-2 py-2 text-muted-foreground">#{item.id}</td>
+                      <td className="px-2 py-2 text-foreground">{item.exchange}</td>
+                      <td className={`px-2 py-2 font-semibold ${action.color}`}>{action.text}</td>
+                      <td className="px-2 py-2 text-foreground">{item.quantity}</td>
+                      <td className="px-2 py-2 text-foreground">{item.leverage}x</td>
+                      <td className="px-2 py-2 text-foreground">{item.fillPrice ? parseFloat(item.fillPrice).toFixed(2) : "-"}</td>
+                      <td className="px-2 py-2 text-muted-foreground">{item.fee ? parseFloat(item.fee).toFixed(4) : "-"}</td>
+                      <td className={`px-2 py-2 font-semibold ${item.realizedPnl ? (parseFloat(item.realizedPnl) >= 0 ? "text-emerald-400" : "text-red-400") : "text-muted-foreground"}`}>
+                        {item.realizedPnl ? `${parseFloat(item.realizedPnl) >= 0 ? "+" : ""}${parseFloat(item.realizedPnl).toFixed(4)}` : "-"}
+                      </td>
+                      <td className={`px-2 py-2 font-semibold ${item.netPnl ? (parseFloat(item.netPnl) >= 0 ? "text-emerald-400" : "text-red-400") : "text-muted-foreground"}`}>
+                        {item.netPnl ? `${parseFloat(item.netPnl) >= 0 ? "+" : ""}${parseFloat(item.netPnl).toFixed(4)}` : "-"}
+                      </td>
+                      <td className="px-2 py-2 text-orange-400">
+                        {item.revenueShareDeducted && parseFloat(item.revenueShareDeducted) > 0
+                          ? parseFloat(item.revenueShareDeducted).toFixed(4)
+                          : "-"}
+                      </td>
+                      <td className="px-2 py-2">
+                        <Badge variant={statusInfo.variant} className="text-xs">{statusInfo.text}</Badge>
+                      </td>
+                      <td className="px-2 py-2 text-muted-foreground whitespace-nowrap">{new Date(item.createdAt).toLocaleString()}</td>
+                    </tr>
+                  );
+                })}
+                {items.length === 0 && (
+                  <tr><td colSpan={12} className="text-center py-8 text-muted-foreground">暂无订单记录</td></tr>
+                )}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {totalPages > 1 && (
+          <div className="flex items-center justify-center gap-3 pt-2 border-t border-border">
+            <Button variant="outline" size="sm" className="bg-transparent" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}>
+              <ChevronLeft className="w-4 h-4" />
+            </Button>
+            <span className="text-xs text-muted-foreground">{page} / {totalPages}（共 {total} 条）</span>
+            <Button variant="outline" size="sm" className="bg-transparent" onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages}>
+              <ChevronRight className="w-4 h-4" />
+            </Button>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── 主页面 ────────────────────────────────────────────────────────────────────
 export default function AdminUsers() {
   const utils = trpc.useUtils();
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
+  const [searchInput, setSearchInput] = useState("");
   const [editUser, setEditUser] = useState<any>(null);
   const [editRatio, setEditRatio] = useState("");
-
-  // Balance adjustment state
   const [balanceOpen, setBalanceOpen] = useState(false);
   const [balanceUser, setBalanceUser] = useState<any>(null);
   const [balanceAmount, setBalanceAmount] = useState("");
   const [balanceNote, setBalanceNote] = useState("");
   const [balanceIsAdd, setBalanceIsAdd] = useState(true);
-
-  // Expanded invitees row
   const [expandedUserId, setExpandedUserId] = useState<number | null>(null);
+  const [fundUser, setFundUser] = useState<any>(null);
+  const [orderUser, setOrderUser] = useState<any>(null);
+
   const toggleExpand = (userId: number) => setExpandedUserId(prev => prev === userId ? null : userId);
 
-  const { data } = trpc.user.adminList.useQuery({ page, limit: 20 });
-  const allItems = data?.items ?? [];
-  const items = search
-    ? allItems.filter((u: any) => (u.name || "").includes(search) || (u.email || "").includes(search))
-    : allItems;
+  // 有搜索词时用搜索接口，否则用列表接口
+  const listQuery = trpc.user.adminList.useQuery({ page, limit: 20 }, { enabled: !search });
+  const searchQuery = trpc.user.adminSearchUsers.useQuery(
+    { keyword: search, page, limit: 20 },
+    { enabled: !!search }
+  );
+
+  const data = search ? searchQuery.data : listQuery.data;
+  const items = data?.items ?? [];
   const total = data?.total ?? 0;
   const totalPages = Math.ceil(total / 20);
+
+  const handleSearch = () => {
+    setSearch(searchInput.trim());
+    setPage(1);
+  };
+
+  const handleClearSearch = () => {
+    setSearchInput("");
+    setSearch("");
+    setPage(1);
+  };
 
   const updateRatioMutation = trpc.user.adminSetRevenueShareRatio.useMutation({
     onSuccess: () => {
       toast.success("收益分成比例已更新");
       utils.user.adminList.invalidate();
+      utils.user.adminSearchUsers.invalidate();
       setEditUser(null);
     },
     onError: (e: any) => toast.error(e.message),
@@ -97,6 +431,7 @@ export default function AdminUsers() {
     onSuccess: (data) => {
       toast.success(`余额调整成功，新余额: ${parseFloat(data.newBalance).toFixed(2)} USDT`);
       utils.user.adminList.invalidate();
+      utils.user.adminSearchUsers.invalidate();
       setBalanceOpen(false);
       setBalanceAmount("");
       setBalanceNote("");
@@ -104,51 +439,49 @@ export default function AdminUsers() {
     onError: (e: any) => toast.error(e.message),
   });
 
-  const openEdit = (u: any) => {
-    setEditUser(u);
-    setEditRatio(u.revenueShareRatio || "0");
-  };
-
+  const openEdit = (u: any) => { setEditUser(u); setEditRatio(u.revenueShareRatio || "0"); };
   const openBalanceAdjust = (u: any, isAdd: boolean) => {
-    setBalanceUser(u);
-    setBalanceIsAdd(isAdd);
-    setBalanceAmount("");
-    setBalanceNote("");
-    setBalanceOpen(true);
+    setBalanceUser(u); setBalanceIsAdd(isAdd); setBalanceAmount(""); setBalanceNote(""); setBalanceOpen(true);
   };
-
   const handleBalanceSubmit = () => {
     const amt = parseFloat(balanceAmount);
     if (!amt || amt <= 0) { toast.error("请输入有效的金额"); return; }
     if (!balanceNote.trim()) { toast.error("请填写操作备注"); return; }
-    adjustBalanceMutation.mutate({
-      userId: balanceUser.id,
-      amount: balanceIsAdd ? amt : -amt,
-      note: balanceNote,
-    });
+    adjustBalanceMutation.mutate({ userId: balanceUser.id, amount: balanceIsAdd ? amt : -amt, note: balanceNote });
   };
 
   return (
     <AdminLayout>
       <div className="space-y-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold">用户管理</h1>
-            <p className="text-muted-foreground text-sm mt-1">管理平台所有用户，设置收益分成比例和余额</p>
-          </div>
+        <div>
+          <h1 className="text-2xl font-bold">用户管理</h1>
+          <p className="text-muted-foreground text-sm mt-1">管理平台所有用户，设置收益分成比例和余额</p>
         </div>
 
-        <div className="flex gap-3">
-          <div className="relative flex-1 max-w-sm">
+        {/* 搜索栏 */}
+        <div className="flex gap-2 max-w-lg">
+          <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
-              placeholder="搜索用户名或邮箱..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              placeholder="搜索 ID / 用户名 / 邮箱..."
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleSearch()}
               className="pl-9 bg-input border-border"
             />
           </div>
+          <Button onClick={handleSearch} size="sm">搜索</Button>
+          {search && (
+            <Button onClick={handleClearSearch} size="sm" variant="ghost">
+              <X className="w-4 h-4" />
+            </Button>
+          )}
         </div>
+        {search && (
+          <p className="text-xs text-muted-foreground -mt-3">
+            搜索 "{search}" 共找到 {total} 个用户
+          </p>
+        )}
 
         <Card className="bg-card border-border">
           <CardContent className="p-0">
@@ -156,8 +489,8 @@ export default function AdminUsers() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border">
-                    {["ID", "用户名", "邮箱", "角色", "余额 (USDT)", "积分", "分成比例", "邀请人", "注册时间", "操作"].map((h) => (
-                      <th key={h} className="text-left px-4 py-3 text-muted-foreground font-medium whitespace-nowrap">{h}</th>
+                    {["ID", "用户名", "邮箱", "角色", "余额(U)", "分成", "注册时间", "操作"].map((h) => (
+                      <th key={h} className="text-left px-2 py-3 text-muted-foreground font-medium whitespace-nowrap text-xs">{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -165,60 +498,48 @@ export default function AdminUsers() {
                   {items.map((u: any) => (
                     <>
                       <tr key={u.id} className="border-b border-border/50 hover:bg-secondary/30">
-                        <td className="px-4 py-3 text-muted-foreground">#{u.id}</td>
-                        <td className="px-4 py-3 font-medium text-foreground">{u.name || "-"}</td>
-                        <td className="px-4 py-3 text-muted-foreground">{u.email || "-"}</td>
-                        <td className="px-4 py-3">
+                        <td className="px-2 py-3 text-muted-foreground text-xs">#{u.id}</td>
+                        <td className="px-2 py-3 font-medium text-foreground text-xs max-w-[80px] truncate" title={u.name}>{u.name || "-"}</td>
+                        <td className="px-2 py-3 text-muted-foreground text-xs max-w-[120px] truncate" title={u.email}>{u.email || "-"}</td>
+                        <td className="px-2 py-3">
                           <Badge variant={u.role === "admin" ? "default" : "secondary"} className="text-xs">{u.role}</Badge>
                         </td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-2">
-                            <span className="font-semibold text-foreground">{parseFloat(u.balance || "0").toFixed(2)}</span>
-                            <div className="flex gap-1">
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                className="h-6 w-6 p-0 text-emerald-500 hover:bg-emerald-500/10"
-                                onClick={() => openBalanceAdjust(u, true)}
-                                title="增加余额"
-                              >
-                                <Plus className="w-3 h-3" />
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                className="h-6 w-6 p-0 text-red-500 hover:bg-red-500/10"
-                                onClick={() => openBalanceAdjust(u, false)}
-                                title="扣减余额"
-                              >
-                                <Minus className="w-3 h-3" />
-                              </Button>
-                            </div>
-                          </div>
+                        <td className="px-2 py-3">
+                          <span className="font-semibold text-foreground text-xs">{parseFloat(u.balance || "0").toFixed(2)}</span>
                         </td>
-                        <td className="px-4 py-3 text-foreground">{u.points ?? 0}</td>
-                        <td className="px-4 py-3 text-foreground">{parseFloat(u.revenueShareRatio || "0").toFixed(1)}%</td>
-                        <td className="px-4 py-3 text-muted-foreground">{u.invitedById ? `#${u.invitedById}` : "-"}</td>
-                        <td className="px-4 py-3 text-xs text-muted-foreground">{new Date(u.createdAt).toLocaleDateString()}</td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-1">
-                            <Button size="sm" variant="ghost" onClick={() => openEdit(u)} title="设置分成比例">
-                              <Settings className="w-4 h-4" />
+                        <td className="px-2 py-3 text-foreground text-xs">{parseFloat(u.revenueShareRatio || "0").toFixed(1)}%</td>
+                        <td className="px-2 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(u.createdAt).toLocaleDateString()}</td>
+                        <td className="px-2 py-3">
+                          <div className="flex items-center gap-0.5 flex-nowrap">
+                            <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-emerald-500 hover:bg-emerald-500/10" onClick={() => openBalanceAdjust(u, true)} title="增加余额">
+                              <Plus className="w-3 h-3" />
+                            </Button>
+                            <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-red-500 hover:bg-red-500/10" onClick={() => openBalanceAdjust(u, false)} title="扣减余额">
+                              <Minus className="w-3 h-3" />
+                            </Button>
+                            <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={() => openEdit(u)} title="设置分成比例">
+                              <Settings className="w-3 h-3" />
+                            </Button>
+                            <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-blue-400 hover:text-blue-300" onClick={() => setFundUser(u)} title="查看充提记录">
+                              <Wallet className="w-3 h-3" />
+                            </Button>
+                            <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-purple-400 hover:text-purple-300" onClick={() => setOrderUser(u)} title="查看交易订单">
+                              <BarChart2 className="w-3 h-3" />
                             </Button>
                             <Button
                               size="sm"
                               variant="ghost"
+                              className={`h-6 w-6 p-0 ${expandedUserId === u.id ? "text-primary" : ""}`}
                               onClick={() => toggleExpand(u.id)}
                               title="查看邀请的成员"
-                              className={expandedUserId === u.id ? "text-primary" : ""}
                             >
-                              {expandedUserId === u.id ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                              {expandedUserId === u.id ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
                             </Button>
                           </div>
                         </td>
                       </tr>
                       {expandedUserId === u.id && (
-                        <InviteesRow userId={u.id} colSpan={10} />
+                        <InviteesRow userId={u.id} colSpan={8} />
                       )}
                     </>
                   ))}
@@ -241,7 +562,7 @@ export default function AdminUsers() {
           </div>
         )}
 
-        {/* Revenue Share Ratio Dialog */}
+        {/* 设置分成比例弹窗 */}
         <Dialog open={!!editUser} onOpenChange={(v) => !v && setEditUser(null)}>
           <DialogContent className="bg-card border-border">
             <DialogHeader>
@@ -259,76 +580,68 @@ export default function AdminUsers() {
                   onChange={(e) => setEditRatio(e.target.value)}
                   className="bg-input border-border"
                 />
-                <p className="text-xs text-muted-foreground">设置该用户盈利时被扣除的分成比例，范围 0% - 70%</p>
+                <p className="text-xs text-muted-foreground">用户盈利时，平台从用户收益中扣除此比例作为服务费（最高70%）</p>
               </div>
-              <Button
-                className="w-full"
-                onClick={() => updateRatioMutation.mutate({ userId: editUser.id, ratio: parseFloat(editRatio) })}
-                disabled={updateRatioMutation.isPending}
-              >
-                {updateRatioMutation.isPending ? "保存中..." : "保存分成比例"}
-              </Button>
+              <div className="flex gap-2 justify-end">
+                <Button variant="outline" className="bg-transparent" onClick={() => setEditUser(null)}>取消</Button>
+                <Button onClick={() => updateRatioMutation.mutate({ userId: editUser.id, ratio: parseFloat(editRatio) })} disabled={updateRatioMutation.isPending}>
+                  {updateRatioMutation.isPending ? "保存中..." : "保存"}
+                </Button>
+              </div>
             </div>
           </DialogContent>
         </Dialog>
 
-        {/* Balance Adjustment Dialog */}
+        {/* 余额调整弹窗 */}
         <Dialog open={balanceOpen} onOpenChange={(v) => !v && setBalanceOpen(false)}>
           <DialogContent className="bg-card border-border">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
-                {balanceIsAdd
-                  ? <Plus className="w-4 h-4 text-emerald-500" />
-                  : <Minus className="w-4 h-4 text-red-500" />}
+                {balanceIsAdd ? <ArrowDownCircle className="w-4 h-4 text-emerald-400" /> : <ArrowUpCircle className="w-4 h-4 text-red-400" />}
                 {balanceIsAdd ? "增加" : "扣减"}余额 - #{balanceUser?.id} {balanceUser?.name}
               </DialogTitle>
             </DialogHeader>
             <div className="space-y-4 mt-2">
-              <div className="p-3 rounded-lg bg-secondary/50 text-sm">
-                <span className="text-muted-foreground">当前余额：</span>
-                <span className="font-semibold text-foreground ml-1">
-                  {parseFloat(balanceUser?.balance || "0").toFixed(2)} USDT
-                </span>
-              </div>
               <div className="space-y-2">
-                <Label>调整金额 (USDT)</Label>
+                <Label>金额 (USDT)</Label>
                 <Input
                   type="number"
-                  min="0.01"
                   step="0.01"
+                  min="0"
                   placeholder="请输入金额"
                   value={balanceAmount}
                   onChange={(e) => setBalanceAmount(e.target.value)}
                   className="bg-input border-border"
                 />
-                {balanceAmount && parseFloat(balanceAmount) > 0 && (
-                  <p className="text-xs text-muted-foreground">
-                    调整后余额：
-                    <span className={`font-semibold ml-1 ${balanceIsAdd ? "text-emerald-500" : "text-red-500"}`}>
-                      {(parseFloat(balanceUser?.balance || "0") + (balanceIsAdd ? 1 : -1) * parseFloat(balanceAmount)).toFixed(2)} USDT
-                    </span>
-                  </p>
-                )}
               </div>
               <div className="space-y-2">
-                <Label>操作备注 <span className="text-red-500">*</span></Label>
+                <Label>操作备注</Label>
                 <Input
-                  placeholder="请填写调整原因（必填）"
+                  placeholder="请填写操作原因"
                   value={balanceNote}
                   onChange={(e) => setBalanceNote(e.target.value)}
                   className="bg-input border-border"
                 />
               </div>
-              <Button
-                className={`w-full ${!balanceIsAdd ? "bg-red-600 hover:bg-red-700" : ""}`}
-                onClick={handleBalanceSubmit}
-                disabled={adjustBalanceMutation.isPending || !balanceAmount || !balanceNote.trim()}
-              >
-                {adjustBalanceMutation.isPending ? "处理中..." : `确认${balanceIsAdd ? "增加" : "扣减"} ${balanceAmount ? parseFloat(balanceAmount).toFixed(2) : "0.00"} USDT`}
-              </Button>
+              <div className="flex gap-2 justify-end">
+                <Button variant="outline" className="bg-transparent" onClick={() => setBalanceOpen(false)}>取消</Button>
+                <Button
+                  onClick={handleBalanceSubmit}
+                  disabled={adjustBalanceMutation.isPending}
+                  className={balanceIsAdd ? "bg-emerald-600 hover:bg-emerald-700" : "bg-red-600 hover:bg-red-700"}
+                >
+                  {adjustBalanceMutation.isPending ? "处理中..." : "确认"}
+                </Button>
+              </div>
             </div>
           </DialogContent>
         </Dialog>
+
+        {/* 充提记录弹窗 */}
+        {fundUser && <FundRecordsDialog user={fundUser} onClose={() => setFundUser(null)} />}
+
+        {/* 交易订单弹窗 */}
+        {orderUser && <OrdersDialog user={orderUser} onClose={() => setOrderUser(null)} />}
       </div>
     </AdminLayout>
   );
