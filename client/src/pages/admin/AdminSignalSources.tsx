@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, Edit, Zap, Key, Eye, EyeOff, Clock, Shield, ChevronLeft, ChevronRight, CheckCircle2, XCircle, Loader2, AlertCircle } from "lucide-react";
+import { formatDateTime as fmtDT } from "@/lib/time";
 import { toast } from "sonner";
 
 type ExchangeType = "okx" | "binance" | "bybit" | "bitget" | "gate";
@@ -53,13 +54,7 @@ const ORDER_STATUS_CONFIG: Record<string, { label: string; color: string }> = {
   cancelled: { label: "已取消", color: "text-muted-foreground" },
 };
 
-function formatDateTime(d: Date | string | null) {
-  if (!d) return "-";
-  return new Date(d).toLocaleString("zh-CN", {
-    year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
-  });
-}
+const formatDateTime = fmtDT;
 
 export default function AdminSignalSources() {
   const utils = trpc.useUtils();

@@ -12,6 +12,7 @@ import {
   ChevronDown, ChevronUp, Users, Wallet, BarChart2, ArrowDownCircle, ArrowUpCircle, X
 } from "lucide-react";
 import { toast } from "sonner";
+import { formatDateTime, formatDate } from "@/lib/time";
 
 // ─── 邀请成员展开行 ────────────────────────────────────────────────────────────
 function InviteesRow({ userId, colSpan }: { userId: number; colSpan: number }) {
@@ -49,7 +50,7 @@ function InviteesRow({ userId, colSpan }: { userId: number; colSpan: number }) {
                         {inv.isActive ? "正常" : "禁用"}
                       </Badge>
                     </td>
-                    <td className="py-1.5 pr-6 text-muted-foreground">{new Date(inv.createdAt).toLocaleDateString()}</td>
+                    <td className="py-1.5 pr-6 text-muted-foreground">{formatDate(inv.createdAt)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -158,7 +159,7 @@ function FundRecordsDialog({ user, onClose }: { user: any; onClose: () => void }
                       {parseFloat(item.amount) >= 0 ? "+" : ""}{parseFloat(item.amount).toFixed(4)} USDT
                     </td>
                     <td className="px-3 py-2 text-muted-foreground max-w-xs truncate">{item.note || "-"}</td>
-                    <td className="px-3 py-2 text-muted-foreground">{new Date(item.createdAt).toLocaleString()}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{formatDateTime(item.createdAt)}</td>
                   </tr>
                 ))}
                 {items.length === 0 && (
@@ -189,7 +190,7 @@ function FundRecordsDialog({ user, onClose }: { user: any; onClose: () => void }
                       </Badge>
                     </td>
                     <td className="px-3 py-2 text-muted-foreground font-mono text-xs max-w-[120px] truncate" title={item.txHash}>{item.txHash || "-"}</td>
-                    <td className="px-3 py-2 text-muted-foreground">{new Date(item.createdAt).toLocaleString()}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{formatDateTime(item.createdAt)}</td>
                   </tr>
                 ))}
                 {items.length === 0 && (
@@ -221,7 +222,7 @@ function FundRecordsDialog({ user, onClose }: { user: any; onClose: () => void }
                         {item.status === "completed" ? "已完成" : item.status === "pending" ? "待审核" : item.status === "rejected" ? "已拒绝" : item.status}
                       </Badge>
                     </td>
-                    <td className="px-3 py-2 text-muted-foreground">{new Date(item.createdAt).toLocaleString()}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{formatDateTime(item.createdAt)}</td>
                   </tr>
                 ))}
                 {items.length === 0 && (
@@ -347,7 +348,7 @@ function OrdersDialog({ user, onClose }: { user: any; onClose: () => void }) {
                       <td className="px-2 py-2">
                         <Badge variant={statusInfo.variant} className="text-xs">{statusInfo.text}</Badge>
                       </td>
-                      <td className="px-2 py-2 text-muted-foreground whitespace-nowrap">{new Date(item.createdAt).toLocaleString()}</td>
+                      <td className="px-2 py-2 text-muted-foreground whitespace-nowrap">{formatDateTime(item.createdAt)}</td>
                     </tr>
                   );
                 })}
@@ -508,7 +509,7 @@ export default function AdminUsers() {
                           <span className="font-semibold text-foreground text-xs">{parseFloat(u.balance || "0").toFixed(2)}</span>
                         </td>
                         <td className="px-2 py-3 text-foreground text-xs">{parseFloat(u.revenueShareRatio || "0").toFixed(1)}%</td>
-                        <td className="px-2 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(u.createdAt).toLocaleDateString()}</td>
+                        <td className="px-2 py-3 text-xs text-muted-foreground whitespace-nowrap">{formatDate(u.createdAt)}</td>
                         <td className="px-2 py-3">
                           <div className="flex items-center gap-0.5 flex-nowrap">
                             <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-emerald-500 hover:bg-emerald-500/10" onClick={() => openBalanceAdjust(u, true)} title="增加余额">

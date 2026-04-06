@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { CheckCircle, XCircle, ChevronLeft, ChevronRight, Wallet, Settings, Save, RefreshCw, ArrowDownToLine, Shield, Key, Eye, EyeOff, Copy } from "lucide-react";
+import { formatDateTime } from "@/lib/time";
 import { toast } from "sonner";
 
 const STATUS_COLORS: Record<string, string> = {
@@ -159,7 +160,7 @@ export default function AdminFunds() {
                   {STATUS_LABELS[item.status] || item.status}
                 </span>
               </td>
-              <td className="px-4 py-3 text-xs text-muted-foreground">{new Date(item.createdAt).toLocaleString()}</td>
+              <td className="px-4 py-3 text-xs text-muted-foreground">{formatDateTime(item.createdAt)}</td>
               <td className="px-4 py-3">
                 {item.status === "pending" && (
                   <Button size="sm" variant="outline" className="bg-transparent text-xs" onClick={() => openReview(item, type)}>审核</Button>
@@ -249,7 +250,7 @@ export default function AdminFunds() {
                           </p>
                           {walletStatus.lastScanTime && (
                             <p className="text-xs text-muted-foreground mt-0.5">
-                              上次扫描: {new Date(walletStatus.lastScanTime).toLocaleString()}
+                              上次扫描: {formatDateTime(walletStatus.lastScanTime)}
                             </p>
                           )}
                         </div>

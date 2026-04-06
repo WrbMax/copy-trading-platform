@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ChevronLeft, ChevronRight, TrendingUp, Settings } from "lucide-react";
+import { formatDateTime } from "@/lib/time";
 import { toast } from "sonner";
 
 export default function AdminRevenueShare() {
@@ -101,7 +102,7 @@ export default function AdminRevenueShare() {
                       <td className="px-4 py-3 text-foreground">#{r.recipientId}</td>
                       <td className="px-4 py-3 text-muted-foreground">{parseFloat(r.ratio).toFixed(2)}%</td>
                       <td className="px-4 py-3 font-semibold text-profit">+{parseFloat(r.amount).toFixed(4)} USDT</td>
-                      <td className="px-4 py-3 text-xs text-muted-foreground">{new Date(r.createdAt).toLocaleString()}</td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground">{formatDateTime(r.createdAt)}</td>
                     </tr>
                   ))}
                 </tbody>

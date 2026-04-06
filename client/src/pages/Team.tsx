@@ -14,6 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { formatShortDateTime, formatDate } from "@/lib/time";
 
 // ─── 订单展示辅助组件 ──────────────────────────────────────────────────────────
 
@@ -26,13 +27,7 @@ function PnlCell({ value }: { value: string | null | undefined }) {
   return <span className="text-muted-foreground text-xs">0.0000</span>;
 }
 
-function formatTime(d: Date | string | null | undefined) {
-  if (!d) return "-";
-  return new Date(d).toLocaleString("zh-CN", {
-    month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
-  });
-}
+const formatTime = formatShortDateTime;
 
 const ACTION_META: Record<string, { label: string; colorClass: string }> = {
   open_long:   { label: "开多", colorClass: "bg-profit/20 text-profit" },
@@ -351,7 +346,7 @@ export default function Team() {
                           </span>
                         </td>
                         <td className="px-4 py-3 text-xs text-muted-foreground">
-                          {new Date(inv.createdAt).toLocaleDateString()}
+                          {formatDate(inv.createdAt)}
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-1">

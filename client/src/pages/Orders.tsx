@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { TrendingUp, TrendingDown, ChevronLeft, ChevronRight, Clock, BarChart2 } from "lucide-react";
+import { formatShortDateTime } from "@/lib/time";
 
 function PnlCell({ value }: { value: string | null | undefined }) {
   if (!value) return <span className="text-muted-foreground text-xs">-</span>;
@@ -15,13 +16,7 @@ function PnlCell({ value }: { value: string | null | undefined }) {
   return <span className="text-muted-foreground text-xs">0.0000</span>;
 }
 
-function formatTime(d: Date | string | null | undefined) {
-  if (!d) return "-";
-  return new Date(d).toLocaleString("zh-CN", {
-    month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
-  });
-}
+const formatTime = formatShortDateTime;
 
 const ACTION_META: Record<string, { label: string; colorClass: string }> = {
   open_long:   { label: "开多", colorClass: "bg-profit/20 text-profit" },

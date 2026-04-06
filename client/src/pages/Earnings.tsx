@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ChevronLeft, ChevronRight, TrendingUp, ArrowDownRight } from "lucide-react";
+import { formatDate } from "@/lib/time";
 
 export default function Earnings() {
   const [page, setPage] = useState(1);
@@ -74,7 +75,7 @@ export default function Earnings() {
                         <td className="px-4 py-3 text-muted-foreground">用户 #{r.traderId}</td>
                         <td className="px-4 py-3 text-right text-muted-foreground">{parseFloat(r.ratio).toFixed(2)}%</td>
                         <td className="px-4 py-3 text-right font-semibold text-profit">+{parseFloat(r.amount).toFixed(4)}</td>
-                        <td className="px-4 py-3 text-right text-xs text-muted-foreground">{new Date(r.createdAt).toLocaleDateString()}</td>
+                        <td className="px-4 py-3 text-right text-xs text-muted-foreground">{formatDate(r.createdAt)}</td>
                       </tr>
                     ))}
                   </tbody>

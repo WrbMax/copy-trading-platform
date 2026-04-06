@@ -6,6 +6,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { AlertTriangle, ChevronLeft, ChevronRight, Info } from "lucide-react";
+import { formatShortDateTime } from "@/lib/time";
 import { toast } from "sonner";
 
 const ACTION_META: Record<string, { label: string; colorClass: string }> = {
@@ -149,7 +150,7 @@ export default function AdminOrders() {
                             </button>
                           </td>
                           <td className="px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">
-                            {time ? new Date(time).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }) : "-"}
+                            {formatShortDateTime(time)}
                           </td>
                         </tr>
                         {/* Expanded detail row */}

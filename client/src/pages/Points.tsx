@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Coins, ArrowRightLeft, Gift, Info, TrendingDown, CheckCircle, XCircle, Clock } from "lucide-react";
+import { formatDateTime } from "@/lib/time";
 import { toast } from "sonner";
 
 const TYPE_LABELS: Record<string, string> = {
@@ -254,10 +255,7 @@ export default function Points() {
                         {tx.amount > 0 ? "+" : ""}{tx.amount}
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        {new Date(tx.createdAt).toLocaleString("zh-CN", {
-                          year: "numeric", month: "2-digit", day: "2-digit",
-                          hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
-                        })}
+                        {formatDateTime(tx.createdAt)}
                       </p>
                     </div>
                   </div>

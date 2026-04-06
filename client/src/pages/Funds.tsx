@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Copy, AlertCircle, Wallet, ArrowDownToLine, ArrowUpFromLine, History, TrendingDown, TrendingUp, Settings2 } from "lucide-react";
+import { formatDateTime } from "@/lib/time";
 import { toast } from "sonner";
 
 const STATUS_MAP: Record<string, { label: string; color: string }> = {
@@ -252,7 +253,7 @@ export default function Funds() {
                           <div>
                             <p className="text-sm font-medium text-foreground">{cfg.label}</p>
                             <p className="text-xs text-muted-foreground mt-0.5">
-                              {new Date(t.createdAt).toLocaleString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false })}
+                              {formatDateTime(t.createdAt)}
                               {t.note && <span className="ml-2 text-muted-foreground/70">{t.note}</span>}
                             </p>
                           </div>
@@ -282,7 +283,7 @@ export default function Funds() {
                       <div>
                         <p className="text-sm font-medium text-emerald-500">+{parseFloat(d.amount).toFixed(4)} USDT</p>
                         <p className="text-xs text-muted-foreground mt-0.5">
-                          {new Date(d.createdAt).toLocaleString()}
+                          {formatDateTime(d.createdAt)}
                           {d.txHash && <span className="ml-2 font-mono">Tx: {d.txHash.slice(0, 10)}...</span>}
                         </p>
                       </div>
