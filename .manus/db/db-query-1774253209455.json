@@ -1,9 +1,0 @@
-{
-  "query": "SELECT * FROM system_config WHERE `key` = 'bscscan_api_key';",
-  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 2yRRhmQmjmz9LMP.root --database 3xjoeN6gTpdmQoJAnkq7pe --execute SELECT * FROM system_config WHERE `key` = 'bscscan_api_key';",
-  "rows": [],
-  "messages": [],
-  "stdout": "",
-  "stderr": "",
-  "execution_time_ms": 1585
-}

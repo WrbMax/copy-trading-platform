@@ -1,8 +1,0 @@
-{
-  "query": "CREATE TABLE IF NOT EXISTS deposit_addresses (id int AUTO_INCREMENT PRIMARY KEY, userId int NOT NULL UNIQUE, address varchar(128) NOT NULL UNIQUE, derivationIndex int NOT NULL UNIQUE, network varchar(32) DEFAULT 'BSC', totalDeposited decimal(20,8) DEFAULT '0', lastCheckedAt timestamp NULL, isActive boolean DEFAULT true, createdAt timestamp DEFAULT CURRENT_TIMESTAMP, updatedAt timestamp DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP);",
-  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 2yRRhmQmjmz9LMP.root --database 3xjoeN6gTpdmQoJAnkq7pe --execute CREATE TABLE IF NOT EXISTS deposit_addresses (id int AUTO_INCREMENT PRIMARY KEY, userId int NOT NULL UNIQUE, address varchar(128) NOT NULL UNIQUE, derivationIndex int NOT NULL UNIQUE, network varchar(32) DEFAULT 'BSC', totalDeposited decimal(20,8) DEFAULT '0', lastCheckedAt timestamp NULL, isActive boolean DEFAULT true, createdAt timestamp DEFAULT CURRENT_TIMESTAMP, updatedAt timestamp DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP);",
-  "returncode": 1,
-  "logs": [
-    "ERROR 9001 (HY000) at line 1: PD server timeout:"
-  ]
-}

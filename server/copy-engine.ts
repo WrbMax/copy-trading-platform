@@ -597,7 +597,8 @@ async function executeCopyTrades(sourceId: number, change: PositionChange) {
         console.log(`[CopyEngine] 📊 User ${us.userId}: totalPnl=${rawPnl.toFixed(4)}, fee=${fee.toFixed(4)}, netPnl=${netPnl.toFixed(4)}, closePrice=${closePrice}, openOrders=${allOpenOrders.length}`);
 
         // Trigger revenue share for profitable orders (use total netPnl)
-        const revenueOrderId = openOrder ? openOrder.id : orderId;
+        // Always use the close order's orderId so revenueShareDeducted is written to the close order
+        const revenueOrderId = orderId;
         if (netPnl > 0) {
           try {
             await processRevenueShare({

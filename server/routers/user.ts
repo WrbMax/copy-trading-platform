@@ -9,9 +9,13 @@ import {
   getUserById,
   listRevenueShareRecords,
   listUsers,
+  searchUsers,
   updateUser,
   listCopyOrders,
   getUserOrderStats,
+  listDeposits,
+  listWithdrawals,
+  listFundTransactions,
 } from "../db";
 import { protectedProcedure, router } from "../_core/trpc";
 import { adminProcedure } from "../_core/trpc";
@@ -150,5 +154,54 @@ export const userRouter = router({
     .input(z.object({ page: z.number().default(1), limit: z.number().default(20) }))
     .query(async ({ input }) => {
       return listRevenueShareRecords(undefined, input.page, input.limit);
+    }),
+
+  // 搜索用户（支持ID、用户名、邮箱）
+  adminSearchUsers: adminProcedure
+    .input(z.object({ keyword: z.string(), page: z.number().default(1), limit: z.number().default(20) }))
+    .query(async ({ input }) => {
+      const { items, total } = await searchUsers(input.keyword, input.page, input.limit);
+      const enriched = await Promise.all(items.map(async (u) => {
+        const apis = await getExchangeApisByUserId(u.id);
+        return {
+          ...u,
+          hasExchangeApi: apis.length > 0,
+          exchangeApiCount: apis.length,
+          exchangeTypes: Array.from(new Set(apis.map((a) => a.exchange))),
+        };
+      }));
+      return { items: enriched, total };
+    }),
+
+  // 查看指定用户的充值记录
+  adminGetUserDeposits: adminProcedure
+    .input(z.object({ userId: z.number(), page: z.number().default(1), limit: z.number().default(20) }))
+    .query(async ({ input }) => {
+      return listDeposits(input.userId, input.page, input.limit);
+    }),
+
+  // 查看指定用户的提现记录
+  adminGetUserWithdrawals: adminProcedure
+    .input(z.object({ userId: z.number(), page: z.number().default(1), limit: z.number().default(20) }))
+    .query(async ({ input }) => {
+      return listWithdrawals(input.userId, input.page, input.limit);
+    }),
+
+  // 查看指定用户的资金流水（包含所有类型）
+  adminGetUserFundTransactions: adminProcedure
+    .input(z.object({ userId: z.number(), page: z.number().default(1), limit: z.number().default(20) }))
+    .query(async ({ input }) => {
+      return listFundTransactions(input.userId, input.page, input.limit);
+    }),
+
+  // 查看指定用户的交易订单
+  adminGetUserOrders: adminProcedure
+    .input(z.object({ userId: z.number(), page: z.number().default(1), limit: z.number().default(20) }))
+    .query(async ({ input }) => {
+      const [orders, stats] = await Promise.all([
+        listCopyOrders(input.userId, input.page, input.limit),
+        getUserOrderStats(input.userId),
+      ]);
+      return { ...orders, stats };
     }),
 });
