@@ -104,6 +104,7 @@ export default function AdminOrders() {
                           </td>
                           <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">
                             {parseFloat(order.actualQuantity || "0").toFixed(4)}
+                            <span className="text-muted-foreground/60 ml-0.5">ETH</span>
                           </td>
                           <td className="px-3 py-2.5 text-xs text-muted-foreground">
                             {parseFloat(order.multiplier || "1").toFixed(1)}x
@@ -160,7 +161,7 @@ export default function AdminOrders() {
                               <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs">
                                 <div>
                                   <p className="text-muted-foreground">信号数量</p>
-                                  <p className="font-semibold">{parseFloat(order.signalQuantity || "0").toFixed(4)}</p>
+                                  <p className="font-semibold">{parseFloat(order.signalQuantity || "0").toFixed(4)} <span className="text-muted-foreground font-normal">ETH</span></p>
                                 </div>
                                 <div>
                                   <p className="text-muted-foreground">开仓价</p>

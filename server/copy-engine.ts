@@ -299,24 +299,26 @@ async function executeCopyTrades(sourceId: number, change: PositionChange) {
     }
 
     // Calculate order size based on exchange type
-    let sz: string;
+    let sz: string;           // 各交易所原生单位（用于实际下单）
+    let ethQty: number;       // 统一换算为 ETH 数量（用于存库显示）
     let exchangeOrderId: string | undefined;
 
     // ── 统一仓位计算：先换算为 ETH 数量，再转换为各交易所合约数 ──
     // 信号源是 OKX，ctVal = 0.1 ETH/张
     // baseEthQty = 信号张数 × 信号ctVal × 用户倍数  （单位：ETH）
     const baseEthQty = change.contractsDelta * ctVal * multiplier;
+    // 信号源 ETH 数量（不含用户倍数，用于 signalQuantity 存库）
+    const signalEthQty = change.contractsDelta * ctVal;
 
     if (userExchange === "binance") {
       // Binance 直接用 ETH 数量下单
       const precision = binanceInfo?.quantityPrecision ?? 3;
       const minQty = parseFloat(binanceInfo?.minQty ?? "0.001");
-      // 统一：不做额外取整，直接用 baseEthQty（除非低于最小值）
       let finalQty = baseEthQty;
       if (finalQty < minQty) finalQty = minQty;
-      // 只做精度截断，不额外向下取整
       sz = finalQty.toFixed(precision);
-      console.log(`[CopyEngine] Binance calc: user=${us.userId}, contracts=${change.contractsDelta}, ctVal=${ctVal}, mult=${multiplier}, baseEthQty=${baseEthQty}, finalSz=${sz}`);
+      ethQty = parseFloat(sz);
+      console.log(`[CopyEngine] Binance calc: user=${us.userId}, contracts=${change.contractsDelta}, ctVal=${ctVal}, mult=${multiplier}, baseEthQty=${baseEthQty}, finalSz=${sz} ETH`);
     } else if (userExchange === "bybit") {
       // Bybit 也直接用 ETH 数量下单
       const bybitSymbol = toBybitSymbol(change.instId);
@@ -326,14 +328,16 @@ async function executeCopyTrades(sourceId: number, change: PositionChange) {
       const rounded = Math.max(minQty, Math.floor(baseEthQty / step) * step);
       const decimals = step.toString().includes(".") ? step.toString().split(".")[1].length : 0;
       sz = rounded.toFixed(decimals);
-      console.log(`[CopyEngine] Bybit calc: user=${us.userId}, contracts=${change.contractsDelta}, ctVal=${ctVal}, mult=${multiplier}, baseEthQty=${baseEthQty}, finalSz=${sz}`);
+      ethQty = parseFloat(sz);
+      console.log(`[CopyEngine] Bybit calc: user=${us.userId}, contracts=${change.contractsDelta}, ctVal=${ctVal}, mult=${multiplier}, baseEthQty=${baseEthQty}, finalSz=${sz} ETH`);
     } else if (userExchange === "bitget") {
       // Bitget USDT-M 永续：1张 = 0.01 ETH
       const bitgetCtVal = 0.01;
       const bitgetContracts = Math.floor(baseEthQty / bitgetCtVal);
       const minSzBitget = 1;
       sz = Math.max(minSzBitget, bitgetContracts).toString();
-      console.log(`[CopyEngine] Bitget calc: user=${us.userId}, contracts=${change.contractsDelta}, ctVal=${ctVal}, mult=${multiplier}, baseEthQty=${baseEthQty}, bitgetContracts=${bitgetContracts}, finalSz=${sz}`);
+      ethQty = parseFloat(sz) * bitgetCtVal; // 换算回 ETH
+      console.log(`[CopyEngine] Bitget calc: user=${us.userId}, contracts=${change.contractsDelta}, ctVal=${ctVal}, mult=${multiplier}, baseEthQty=${baseEthQty}, bitgetContracts=${sz}, ethQty=${ethQty} ETH`);
     } else if (userExchange === "gate") {
       // Gate.io ETH_USDT：1张 = 0.01 ETH（需从合约信息获取）
       const gateInstrument = await getGateInstrument(toGateContract(change.instId));
@@ -341,22 +345,24 @@ async function executeCopyTrades(sourceId: number, change: PositionChange) {
       const gateContracts = Math.floor(baseEthQty / gateCtVal);
       const minSzGate = 1;
       sz = Math.max(minSzGate, gateContracts).toString();
-      console.log(`[CopyEngine] Gate calc: user=${us.userId}, contracts=${change.contractsDelta}, ctVal=${ctVal}, mult=${multiplier}, baseEthQty=${baseEthQty}, gateCtVal=${gateCtVal}, gateContracts=${gateContracts}, finalSz=${sz}`);
+      ethQty = parseFloat(sz) * gateCtVal; // 换算回 ETH
+      console.log(`[CopyEngine] Gate calc: user=${us.userId}, contracts=${change.contractsDelta}, ctVal=${ctVal}, mult=${multiplier}, baseEthQty=${baseEthQty}, gateContracts=${sz}, ethQty=${ethQty} ETH`);
     } else {
       // OKX：信号源也是 OKX，ctVal 相同（0.1 ETH/张）
-      // 统一：直接用 baseEthQty 换算为张数，不额外向下取整
       const minSz = instrument ? parseFloat(instrument.minSz) : 0.01;
       const lotSz = instrument ? parseFloat(instrument.lotSz) : 0.01;
       let rawContracts = baseEthQty / ctVal; // = contractsDelta * multiplier
-      // 只做 lotSz 对齐（四舍五入，而非向下取整）
       let alignedContracts = Math.round(rawContracts / lotSz) * lotSz;
       if (alignedContracts < minSz) alignedContracts = minSz;
       const lotDecimals = lotSz.toString().includes(".") ? lotSz.toString().split(".")[1].length : 0;
       sz = alignedContracts.toFixed(lotDecimals);
-      console.log(`[CopyEngine] OKX calc: user=${us.userId}, contracts=${change.contractsDelta}, ctVal=${ctVal}, mult=${multiplier}, baseEthQty=${baseEthQty}, rawContracts=${rawContracts}, alignedContracts=${alignedContracts}, finalSz=${sz}`);
+      ethQty = alignedContracts * ctVal; // 换算为 ETH
+      console.log(`[CopyEngine] OKX calc: user=${us.userId}, contracts=${change.contractsDelta}, ctVal=${ctVal}, mult=${multiplier}, baseEthQty=${baseEthQty}, okxContracts=${sz}, ethQty=${ethQty} ETH`);
     }
 
     // Insert pending order record
+    // signalQuantity: 信号源原始数量（ETH，不含用户倍数）
+    // actualQuantity: 实际下单数量（ETH，统一单位，含用户倍数）
     const orderId = await createCopyOrder({
       userId: us.userId,
       signalLogId: logId,
@@ -366,8 +372,8 @@ async function executeCopyTrades(sourceId: number, change: PositionChange) {
       symbol: change.instId,
       action: dbAction,
       multiplier: us.multiplier,
-      signalQuantity: change.contractsDelta.toFixed(8),
-      actualQuantity: sz,
+      signalQuantity: signalEthQty.toFixed(8),  // 统一为 ETH
+      actualQuantity: ethQty.toFixed(8),         // 统一为 ETH
       openPrice: change.avgPx > 0 ? change.avgPx.toFixed(8) : undefined,
       openTime: new Date(),
       status: "pending",

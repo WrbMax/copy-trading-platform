@@ -132,6 +132,7 @@ export default function Orders() {
                           </td>
                           <td className="px-4 py-2.5 text-right font-mono text-xs">
                             {parseFloat(order.actualQuantity || "0").toFixed(4)}
+                            <span className="text-muted-foreground/60 ml-0.5">ETH</span>
                           </td>
                           <td className="px-4 py-2.5 text-right font-mono text-xs text-muted-foreground">
                             {price ? parseFloat(price).toFixed(2) : "-"}
