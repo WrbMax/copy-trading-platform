@@ -319,6 +319,7 @@ function OrdersDialog({ user, onClose }: { user: any; onClose: () => void }) {
                 {items.map((item: any) => {
                   const action = actionLabel[item.action] || { text: item.action, color: "text-foreground" };
                   const isCloseAction = item.action === "close_long" || item.action === "close_short";
+                  const isOpenAction = item.action === "open_long" || item.action === "open_short";
                   const statusInfo = isCloseAction && item.status === "closed"
                     ? { text: "已平仓", variant: "secondary" as any }
                     : statusLabel[item.status] || { text: item.status, variant: "secondary" as any };
@@ -331,11 +332,11 @@ function OrdersDialog({ user, onClose }: { user: any; onClose: () => void }) {
                       <td className="px-2 py-2 text-foreground">{item.leverage}x</td>
                       <td className="px-2 py-2 text-foreground">{item.fillPrice ? parseFloat(item.fillPrice).toFixed(2) : "-"}</td>
                       <td className="px-2 py-2 text-muted-foreground">{item.fee ? parseFloat(item.fee).toFixed(4) : "-"}</td>
-                      <td className={`px-2 py-2 font-semibold ${item.realizedPnl ? (parseFloat(item.realizedPnl) >= 0 ? "text-emerald-400" : "text-red-400") : "text-muted-foreground"}`}>
-                        {item.realizedPnl ? `${parseFloat(item.realizedPnl) >= 0 ? "+" : ""}${parseFloat(item.realizedPnl).toFixed(4)}` : "-"}
+                      <td className={`px-2 py-2 font-semibold ${!isOpenAction && item.realizedPnl ? (parseFloat(item.realizedPnl) >= 0 ? "text-emerald-400" : "text-red-400") : "text-muted-foreground"}`}>
+                        {isOpenAction ? "-" : (item.realizedPnl ? `${parseFloat(item.realizedPnl) >= 0 ? "+" : ""}${parseFloat(item.realizedPnl).toFixed(4)}` : "-")}
                       </td>
-                      <td className={`px-2 py-2 font-semibold ${item.netPnl ? (parseFloat(item.netPnl) >= 0 ? "text-emerald-400" : "text-red-400") : "text-muted-foreground"}`}>
-                        {item.netPnl ? `${parseFloat(item.netPnl) >= 0 ? "+" : ""}${parseFloat(item.netPnl).toFixed(4)}` : "-"}
+                      <td className={`px-2 py-2 font-semibold ${!isOpenAction && item.netPnl ? (parseFloat(item.netPnl) >= 0 ? "text-emerald-400" : "text-red-400") : "text-muted-foreground"}`}>
+                        {isOpenAction ? "-" : (item.netPnl ? `${parseFloat(item.netPnl) >= 0 ? "+" : ""}${parseFloat(item.netPnl).toFixed(4)}` : "-")}
                       </td>
                       <td className="px-2 py-2 text-orange-400">
                         {item.revenueShareDeducted && parseFloat(item.revenueShareDeducted) > 0
