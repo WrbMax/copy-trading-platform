@@ -146,7 +146,19 @@ export const userRouter = router({
       const user = await getUserById(input.userId);
       if (!user) throw new TRPCError({ code: "NOT_FOUND" });
 
+      // 设置该用户的分成比例
       await updateUser(input.userId, { revenueShareRatio: input.ratio.toFixed(2) });
+
+      // 自动修正：将该用户所有直接下级中比例低于新值的，提升到新值
+      // 确保下级的分成比例 >= 上级（该用户）的分成比例
+      const invitees = await getMyInvitees(input.userId);
+      for (const invitee of invitees) {
+        const inviteeRatio = parseFloat(invitee.revenueShareRatio || "0");
+        if (inviteeRatio < input.ratio) {
+          await updateUser(invitee.id, { revenueShareRatio: input.ratio.toFixed(2) });
+        }
+      }
+
       return { success: true };
     }),
 

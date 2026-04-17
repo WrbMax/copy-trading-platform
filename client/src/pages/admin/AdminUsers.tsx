@@ -579,7 +579,7 @@ export default function AdminUsers() {
                   onChange={(e) => setEditRatio(e.target.value)}
                   className="bg-input border-border"
                 />
-                <p className="text-xs text-muted-foreground">用户盈利时，平台从用户收益中扣除此比例作为服务费（最高70%）</p>
+                <p className="text-xs text-muted-foreground">用户盈利时，平台从用户收益中扣除此比例作为服务费（0% - 70%）。若新比例高于该用户已设置的直接下级比例，下级比例将自动提升至相同水平。</p>
               </div>
               <div className="flex gap-2 justify-end">
                 <Button variant="outline" className="bg-transparent" onClick={() => setEditUser(null)}>取消</Button>
