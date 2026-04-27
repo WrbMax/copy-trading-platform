@@ -134,14 +134,20 @@ export async function getGateOrderDetail(
   };
 }
 
-/** Get Gate.io contract info */
+/** Get Gate.io contract info (cached 5 min) */
+const gateInstrumentCache = new Map<string, { data: { quanto_multiplier: string; order_size_min: number }; expiry: number }>();
 export async function getGateInstrument(
   contract: string
 ): Promise<{ quanto_multiplier: string; order_size_min: number } | null> {
+  const cached = gateInstrumentCache.get(contract);
+  if (cached && Date.now() < cached.expiry) return cached.data;
   try {
     const data = await fetch(
       `${BASE_URL}/api/v4/futures/usdt/contracts/${contract}`
     ).then((r) => r.json()) as { quanto_multiplier: string; order_size_min: number };
+    if (data?.quanto_multiplier) {
+      gateInstrumentCache.set(contract, { data, expiry: Date.now() + 5 * 60 * 1000 });
+    }
     return data;
   } catch {
     return null;

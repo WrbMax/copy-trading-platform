@@ -3,19 +3,13 @@ import { z } from "zod";
 import {
   getAdminDashboardStats,
   getExchangeApisByUserId,
-  getSystemConfig,
   getMyInvitees,
-  getTeamStats,
   getUserById,
-  listRevenueShareRecords,
   listUsers,
   searchUsers,
   updateUser,
   listCopyOrders,
   getUserOrderStats,
-  listDeposits,
-  listWithdrawals,
-  listFundTransactions,
 } from "../db";
 import { protectedProcedure, router } from "../_core/trpc";
 import { adminProcedure } from "../_core/trpc";
@@ -29,63 +23,12 @@ export const userRouter = router({
       email: user.email,
       name: user.name,
       inviteCode: user.inviteCode,
-      balance: user.balance,
-      points: user.points,
       totalProfit: user.totalProfit,
       totalLoss: user.totalLoss,
-      lastPointsRedeemMonth: user.lastPointsRedeemMonth,
-      revenueShareRatio: user.revenueShareRatio,
       role: user.role,
       createdAt: user.createdAt,
     };
   }),
-
-  teamStats: protectedProcedure.query(async ({ ctx }) => {
-    return getTeamStats(ctx.user.id);
-  }),
-
-  myRevenueShares: protectedProcedure
-    .input(z.object({ page: z.number().default(1), limit: z.number().default(20) }))
-    .query(async ({ input, ctx }) => {
-      return listRevenueShareRecords(ctx.user.id, input.page, input.limit);
-    }),
-
-  myInvitees: protectedProcedure.query(async ({ ctx }) => {
-    return getMyInvitees(ctx.user.id);
-  }),
-
-  setInviteeRevenueShare: protectedProcedure
-    .input(z.object({ inviteeId: z.number(), ratio: z.number().min(0).max(70) }))
-    .mutation(async ({ input, ctx }) => {
-      // Verify the invitee is actually invited by this user
-      const invitee = await getUserById(input.inviteeId);
-      if (!invitee) throw new TRPCError({ code: "NOT_FOUND", message: "用户不存在" });
-      if (invitee.referrerId !== ctx.user.id) throw new TRPCError({ code: "FORBIDDEN", message: "您只能给自己邀请的人设置分成比例" });
-      // Invitee's ratio must be >= user's own ratio and <= 70%
-      const currentUser = await getUserById(ctx.user.id);
-      const myRatio = parseFloat(currentUser?.revenueShareRatio || "0");
-      if (input.ratio < myRatio) {
-        throw new TRPCError({ code: "BAD_REQUEST", message: `分成比例不能低于您自己的比例 (${myRatio}%)` });
-      }
-      if (input.ratio > 70) {
-        throw new TRPCError({ code: "BAD_REQUEST", message: "分成比例不能超过70%" });
-      }
-      await updateUser(input.inviteeId, { revenueShareRatio: input.ratio.toFixed(2) });
-      return { success: true };
-    }),
-
-  // 查看直推成员的交易记录（只能查看自己直接邀请的人）
-  inviteeMemberOrders: protectedProcedure
-    .input(z.object({ inviteeId: z.number(), page: z.number().default(1), limit: z.number().default(20) }))
-    .query(async ({ input, ctx }) => {
-      // 安全校验：确认该成员确实是当前用户的直推下级
-      const invitee = await getUserById(input.inviteeId);
-      if (!invitee) throw new TRPCError({ code: "NOT_FOUND", message: "用户不存在" });
-      if (invitee.referrerId !== ctx.user.id) throw new TRPCError({ code: "FORBIDDEN", message: "您只能查看自己直接邀请的成员" });
-      const orders = await listCopyOrders(input.inviteeId, input.page, input.limit);
-      const stats = await getUserOrderStats(input.inviteeId);
-      return { ...orders, stats, inviteeName: invitee.name || `用户#${invitee.id}` };
-    }),
 
   // Admin
   adminDashboard: adminProcedure.query(async () => {
@@ -108,17 +51,31 @@ export const userRouter = router({
       return { items: enriched, total };
     }),
 
+  adminSearch: adminProcedure
+    .input(z.object({ keyword: z.string(), page: z.number().default(1), limit: z.number().default(20) }))
+    .query(async ({ input }) => {
+      const { items, total } = await searchUsers(input.keyword, input.page, input.limit);
+      const enriched = await Promise.all(items.map(async (u) => {
+        const apis = await getExchangeApisByUserId(u.id);
+        return {
+          ...u,
+          hasExchangeApi: apis.length > 0,
+          exchangeApiCount: apis.length,
+          exchangeTypes: Array.from(new Set(apis.map((a) => a.exchange))),
+        };
+      }));
+      return { items: enriched, total };
+    }),
+
   adminGetUser: adminProcedure
     .input(z.object({ userId: z.number() }))
     .query(async ({ input }) => {
       const user = await getUserById(input.userId);
       if (!user) throw new TRPCError({ code: "NOT_FOUND" });
       const apis = await getExchangeApisByUserId(input.userId);
-      const teamStats = await getTeamStats(input.userId);
       return {
         ...user,
         apis: apis.map((a) => ({ ...a, apiKeyEncrypted: "****", secretKeyEncrypted: "****", passphraseEncrypted: a.passphraseEncrypted ? "****" : null })),
-        teamStats,
       };
     }),
 
@@ -135,85 +92,11 @@ export const userRouter = router({
       return { success: true };
     }),
 
-  adminSetRevenueShareRatio: adminProcedure
-    .input(z.object({
-      userId: z.number(),
-      ratio: z.number().min(0).max(70),
-    }))
-    .mutation(async ({ input }) => {
-      if (input.ratio > 70) throw new TRPCError({ code: "BAD_REQUEST", message: "分成比例不能超过70%" });
-
-      const user = await getUserById(input.userId);
-      if (!user) throw new TRPCError({ code: "NOT_FOUND" });
-
-      // 设置该用户的分成比例
-      await updateUser(input.userId, { revenueShareRatio: input.ratio.toFixed(2) });
-
-      // 自动修正：将该用户所有直接下级中比例低于新值的，提升到新值
-      // 确保下级的分成比例 >= 上级（该用户）的分成比例
-      const invitees = await getMyInvitees(input.userId);
-      for (const invitee of invitees) {
-        const inviteeRatio = parseFloat(invitee.revenueShareRatio || "0");
-        if (inviteeRatio < input.ratio) {
-          await updateUser(invitee.id, { revenueShareRatio: input.ratio.toFixed(2) });
-        }
-      }
-
-      return { success: true };
-    }),
-
-  adminRevenueShareRecords: adminProcedure
-    .input(z.object({ page: z.number().default(1), limit: z.number().default(20) }))
-    .query(async ({ input }) => {
-      return listRevenueShareRecords(undefined, input.page, input.limit);
-    }),
-
-  // 搜索用户（支持ID、用户名、邮箱）
-  adminSearchUsers: adminProcedure
-    .input(z.object({ keyword: z.string(), page: z.number().default(1), limit: z.number().default(20) }))
-    .query(async ({ input }) => {
-      const { items, total } = await searchUsers(input.keyword, input.page, input.limit);
-      const enriched = await Promise.all(items.map(async (u) => {
-        const apis = await getExchangeApisByUserId(u.id);
-        return {
-          ...u,
-          hasExchangeApi: apis.length > 0,
-          exchangeApiCount: apis.length,
-          exchangeTypes: Array.from(new Set(apis.map((a) => a.exchange))),
-        };
-      }));
-      return { items: enriched, total };
-    }),
-
-  // 查看指定用户的充值记录
-  adminGetUserDeposits: adminProcedure
-    .input(z.object({ userId: z.number(), page: z.number().default(1), limit: z.number().default(20) }))
-    .query(async ({ input }) => {
-      return listDeposits(input.userId, input.page, input.limit);
-    }),
-
-  // 查看指定用户的提现记录
-  adminGetUserWithdrawals: adminProcedure
-    .input(z.object({ userId: z.number(), page: z.number().default(1), limit: z.number().default(20) }))
-    .query(async ({ input }) => {
-      return listWithdrawals(input.userId, input.page, input.limit);
-    }),
-
-  // 查看指定用户的资金流水（包含所有类型）
-  adminGetUserFundTransactions: adminProcedure
-    .input(z.object({ userId: z.number(), page: z.number().default(1), limit: z.number().default(20) }))
-    .query(async ({ input }) => {
-      return listFundTransactions(input.userId, input.page, input.limit);
-    }),
-
-  // 查看指定用户的交易订单
   adminGetUserOrders: adminProcedure
     .input(z.object({ userId: z.number(), page: z.number().default(1), limit: z.number().default(20) }))
     .query(async ({ input }) => {
-      const [orders, stats] = await Promise.all([
-        listCopyOrders(input.userId, input.page, input.limit),
-        getUserOrderStats(input.userId),
-      ]);
-      return { ...orders, stats };
+      const { items, total } = await listCopyOrders(input.userId, input.page, input.limit);
+      const stats = await getUserOrderStats(input.userId);
+      return { items, total, stats };
     }),
 });

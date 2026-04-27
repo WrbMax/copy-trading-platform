@@ -135,17 +135,22 @@ export async function closeBitgetShort(creds: BitgetCredentials, instId: string,
   return placeBitgetOrder(creds, instId, "close_short", qty);
 }
 
-/** Get Bitget instrument info */
+/** Get Bitget instrument info (cached 5 min) */
+const bitgetInstrumentCache = new Map<string, { data: { sizeMultiplier: string; minTradeNum: string }; expiry: number }>();
 export async function getBitgetInstrument(
   symbol: string
 ): Promise<{ sizeMultiplier: string; minTradeNum: string } | null> {
+  const cached = bitgetInstrumentCache.get(symbol);
+  if (cached && Date.now() < cached.expiry) return cached.data;
   try {
     const data = await fetch(
       `${BASE_URL}/api/v2/mix/market/contracts?productType=USDT-FUTURES&symbol=${symbol}`
     ).then((r) => r.json()) as {
       data: Array<{ sizeMultiplier: string; minTradeNum: string }>;
     };
-    return data.data?.[0] ?? null;
+    const result = data.data?.[0] ?? null;
+    if (result) bitgetInstrumentCache.set(symbol, { data: result, expiry: Date.now() + 5 * 60 * 1000 });
+    return result;
   } catch {
     return null;
   }

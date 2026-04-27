@@ -11,8 +11,8 @@ export interface BybitCredentials {
 const BASE_URL = "https://api.bybit.com";
 const RECV_WINDOW = "5000";
 
-function sign(apiKey: string, secretKey: string, timestamp: string, payload: string): string {
-  const msg = timestamp + apiKey + RECV_WINDOW + payload;
+function sign(secretKey: string, timestamp: string, payload: string): string {
+  const msg = timestamp + secretKey + RECV_WINDOW + payload;
   return crypto.createHmac("sha256", secretKey).update(msg).digest("hex");
 }
 
@@ -37,7 +37,7 @@ async function bybitRequest<T>(
     signPayload = body;
   }
 
-  const signature = sign(creds.apiKey, creds.secretKey, timestamp, signPayload);
+  const signature = sign(creds.secretKey, timestamp, signPayload);
 
   const res = await fetch(url, {
     method,
@@ -117,93 +117,31 @@ export async function closeBybitPosition(
   });
 }
 
-/** Query a specific Bybit order to get fill details.
- * First tries active orders (/v5/order/realtime), then falls back to history (/v5/order/history).
- */
+/** Query a specific Bybit order to get fill details */
 export async function getBybitOrderDetail(
   creds: BybitCredentials,
   symbol: string,
   orderId: string
-): Promise<{ avgPrice: string; cumExecQty: string; cumExecFee: string; status: string; profit: string }> {
-  type OrderItem = { avgPrice: string; cumExecQty: string; cumExecFee: string; orderStatus: string };
-
-  // Try active orders first
-  let order: OrderItem | undefined;
-  try {
-    const data = await bybitRequest<{ list: Array<OrderItem> }>(
-      creds, "GET", "/v5/order/realtime", { category: "linear", symbol, orderId }
-    );
-    order = data.list?.[0];
-  } catch {
-    // ignore, will try history
-  }
-
-  // If not found in active orders, query history
-  if (!order || !order.avgPrice || order.avgPrice === "0") {
-    try {
-      const data = await bybitRequest<{ list: Array<OrderItem> }>(
-        creds, "GET", "/v5/order/history", { category: "linear", symbol, orderId }
-      );
-      order = data.list?.[0];
-    } catch {
-      // ignore
-    }
-  }
-
+): Promise<{ avgPrice: string; cumExecQty: string; cumExecFee: string; status: string }> {
+  const data = await bybitRequest<{ list: Array<{ avgPrice: string; cumExecQty: string; cumExecFee: string; orderStatus: string }> }>(
+    creds, "GET", "/v5/order/realtime", { category: "linear", symbol, orderId }
+  );
+  const order = data.list?.[0];
   return {
     avgPrice: order?.avgPrice || "0",
     cumExecQty: order?.cumExecQty || "0",
     cumExecFee: order?.cumExecFee || "0",
     status: order?.orderStatus || "UNKNOWN",
-    profit: "0", // Bybit order API doesn't return PnL; use getBybitClosedPnl instead
   };
 }
 
-/**
- * Query Bybit closed PnL for a specific order.
- * Calls /v5/position/closed-pnl which returns realized PnL per closing trade.
- * Retries up to 3 times with 2s delay because Bybit may have a short delay
- * before the closed-pnl record appears after order fill.
- * Returns the closedPnl value matching the given orderId, or 0 if not found.
- */
-export async function getBybitClosedPnl(
-  creds: BybitCredentials,
-  symbol: string,
-  orderId: string
-): Promise<number> {
-  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-  const maxRetries = 3;
-  const retryDelay = 2000; // 2 seconds
-
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
-    try {
-      type PnlItem = { orderId: string; closedPnl: string; cumEntryValue: string; cumExitValue: string };
-      // Fetch recent closed PnL records (last 50 should cover the order)
-      const data = await bybitRequest<{ list: Array<PnlItem> }>(
-        creds, "GET", "/v5/position/closed-pnl",
-        { category: "linear", symbol, limit: 50 }
-      );
-      const record = data.list?.find((r) => r.orderId === orderId);
-      if (record) {
-        return parseFloat(record.closedPnl) || 0;
-      }
-      // Record not found yet — wait and retry (except on last attempt)
-      if (attempt < maxRetries - 1) {
-        await sleep(retryDelay);
-      }
-    } catch {
-      if (attempt < maxRetries - 1) {
-        await sleep(retryDelay);
-      }
-    }
-  }
-  return 0;
-}
-
-/** Get Bybit instrument info for quantity precision */
+/** Get Bybit instrument info for quantity precision (cached 5 min) */
+const bybitInstrumentCache = new Map<string, { data: { qtyStep: string; minOrderQty: string }; expiry: number }>();
 export async function getBybitInstrument(
   symbol: string
 ): Promise<{ qtyStep: string; minOrderQty: string } | null> {
+  const cached = bybitInstrumentCache.get(symbol);
+  if (cached && Date.now() < cached.expiry) return cached.data;
   try {
     const data = await fetch(
       `${BASE_URL}/v5/market/instruments-info?category=linear&symbol=${symbol}`
@@ -212,10 +150,12 @@ export async function getBybitInstrument(
     };
     const item = data.result?.list?.[0];
     if (!item) return null;
-    return {
+    const result = {
       qtyStep: item.lotSizeFilter.qtyStep,
       minOrderQty: item.lotSizeFilter.minOrderQty,
     };
+    bybitInstrumentCache.set(symbol, { data: result, expiry: Date.now() + 5 * 60 * 1000 });
+    return result;
   } catch {
     return null;
   }

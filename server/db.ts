@@ -3,18 +3,13 @@ import { drizzle } from "drizzle-orm/mysql2";
 import {
   InsertUser,
   copyOrders,
-  deposits,
   emailVerificationCodes,
   exchangeApis,
-  fundTransactions,
-  pointsTransactions,
-  revenueShareRecords,
   signalLogs,
   signalSources,
   systemConfig,
   userStrategies,
   users,
-  withdrawals,
 } from "../drizzle/schema";
 import { ENV } from "./_core/env";
 
@@ -152,26 +147,6 @@ export async function getAdminUser() {
   if (!db) return null;
   const result = await db.select().from(users).where(eq(users.role, "admin")).limit(1);
   return result[0] ?? null;
-}
-
-export async function getUserReferralChain(userId: number): Promise<Array<{ id: number; revenueShareRatio: string }>> {
-  const db = await getDb();
-  if (!db) return [];
-  const chain: Array<{ id: number; revenueShareRatio: string }> = [];
-  // Start from the trader's direct referrer and walk up the tree
-  const trader = await getUserById(userId);
-  if (!trader || !trader.referrerId) return [];
-  let currentReferrerId: number | null | undefined = trader.referrerId;
-  const visited = new Set<number>();
-  while (currentReferrerId) {
-    if (visited.has(currentReferrerId)) break;
-    visited.add(currentReferrerId);
-    const ancestor = await getUserById(currentReferrerId);
-    if (!ancestor) break;
-    chain.push({ id: ancestor.id, revenueShareRatio: ancestor.revenueShareRatio });
-    currentReferrerId = ancestor.referrerId ?? null;
-  }
-  return chain;
 }
 
 // ─── Email Verification ────────────────────────────────────────────────────────
@@ -488,149 +463,6 @@ export async function getUserOrderStats(userId: number) {
   return { totalProfit, totalLoss, netPnl: totalProfit - totalLoss, totalOrders: Number(row.totalOrders), openOrders: Number(openResult[0].openOrders), totalRevenueShare };
 }
 
-// ─── Revenue Share ─────────────────────────────────────────────────────────────
-export async function createRevenueShareRecords(records: typeof revenueShareRecords.$inferInsert[]) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  if (records.length === 0) return;
-  await db.insert(revenueShareRecords).values(records);
-}
-
-export async function listRevenueShareRecords(userId?: number, page = 1, limit = 20) {
-  const db = await getDb();
-  if (!db) return { items: [], total: 0 };
-  const offset = (page - 1) * limit;
-  const where = userId ? eq(revenueShareRecords.recipientId, userId) : undefined;
-  const items = where
-    ? await db.select().from(revenueShareRecords).where(where).orderBy(desc(revenueShareRecords.createdAt)).limit(limit).offset(offset)
-    : await db.select().from(revenueShareRecords).orderBy(desc(revenueShareRecords.createdAt)).limit(limit).offset(offset);
-  const countQuery = where
-    ? await db.select({ count: sql<number>`count(*)` }).from(revenueShareRecords).where(where)
-    : await db.select({ count: sql<number>`count(*)` }).from(revenueShareRecords);
-  return { items, total: Number(countQuery[0].count) };
-}
-
-export async function getUserRevenueShareStats(userId: number) {
-  const db = await getDb();
-  if (!db) return { totalReceived: 0, totalDeducted: 0 };
-  // 以平仓订单为唯一数据源
-  const received = await db.select({ total: sql<string>`COALESCE(SUM(amount), 0)` })
-    .from(revenueShareRecords).where(eq(revenueShareRecords.recipientId, userId));
-  const deducted = await db.select({ total: sql<string>`COALESCE(SUM(revenueShareDeducted), 0)` })
-    .from(copyOrders).where(
-      and(
-        eq(copyOrders.userId, userId),
-        sql`action IN ('close_long', 'close_short')`,
-        eq(copyOrders.status, 'closed')
-      )
-    );
-  return {
-    totalReceived: parseFloat(received[0].total || "0"),
-    totalDeducted: parseFloat(deducted[0].total || "0"),
-  };
-}
-
-// ─── Points ────────────────────────────────────────────────────────────────────
-export async function addPointsTransaction(data: typeof pointsTransactions.$inferInsert) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db.insert(pointsTransactions).values(data);
-}
-
-export async function listPointsTransactions(userId: number, page = 1, limit = 20) {
-  const db = await getDb();
-  if (!db) return { items: [], total: 0 };
-  const offset = (page - 1) * limit;
-  const items = await db.select().from(pointsTransactions).where(eq(pointsTransactions.userId, userId))
-    .orderBy(desc(pointsTransactions.createdAt)).limit(limit).offset(offset);
-  const [{ count }] = await db.select({ count: sql<number>`count(*)` }).from(pointsTransactions).where(eq(pointsTransactions.userId, userId));
-  return { items, total: Number(count) };
-}
-
-export async function listAllPointsTransactions(page = 1, limit = 20) {
-  const db = await getDb();
-  if (!db) return { items: [], total: 0 };
-  const offset = (page - 1) * limit;
-  const items = await db.select().from(pointsTransactions).orderBy(desc(pointsTransactions.createdAt)).limit(limit).offset(offset);
-  const [{ count }] = await db.select({ count: sql<number>`count(*)` }).from(pointsTransactions);
-  return { items, total: Number(count) };
-}
-
-// ─── Deposits ─────────────────────────────────────────────────────────────────
-export async function createDeposit(data: typeof deposits.$inferInsert) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db.insert(deposits).values(data);
-}
-
-export async function listDeposits(userId?: number, page = 1, limit = 20) {
-  const db = await getDb();
-  if (!db) return { items: [], total: 0 };
-  const offset = (page - 1) * limit;
-  const where = userId ? eq(deposits.userId, userId) : undefined;
-  const items = where
-    ? await db.select().from(deposits).where(where).orderBy(desc(deposits.createdAt)).limit(limit).offset(offset)
-    : await db.select().from(deposits).orderBy(desc(deposits.createdAt)).limit(limit).offset(offset);
-  const countQuery = where
-    ? await db.select({ count: sql<number>`count(*)` }).from(deposits).where(where)
-    : await db.select({ count: sql<number>`count(*)` }).from(deposits);
-  return { items, total: Number(countQuery[0].count) };
-}
-
-export async function updateDeposit(id: number, data: Partial<typeof deposits.$inferInsert>) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db.update(deposits).set(data).where(eq(deposits.id, id));
-}
-
-// ─── Withdrawals ──────────────────────────────────────────────────────────────
-export async function createWithdrawal(data: typeof withdrawals.$inferInsert) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db.insert(withdrawals).values(data);
-}
-
-export async function listWithdrawals(userId?: number, page = 1, limit = 20) {
-  const db = await getDb();
-  if (!db) return { items: [], total: 0 };
-  const offset = (page - 1) * limit;
-  const where = userId ? eq(withdrawals.userId, userId) : undefined;
-  const items = where
-    ? await db.select().from(withdrawals).where(where).orderBy(desc(withdrawals.createdAt)).limit(limit).offset(offset)
-    : await db.select().from(withdrawals).orderBy(desc(withdrawals.createdAt)).limit(limit).offset(offset);
-  const countQuery = where
-    ? await db.select({ count: sql<number>`count(*)` }).from(withdrawals).where(where)
-    : await db.select({ count: sql<number>`count(*)` }).from(withdrawals);
-  return { items, total: Number(countQuery[0].count) };
-}
-
-export async function updateWithdrawal(id: number, data: Partial<typeof withdrawals.$inferInsert>) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db.update(withdrawals).set(data).where(eq(withdrawals.id, id));
-}
-
-// ─── Fund Transactions ─────────────────────────────────────────────────────────
-export async function addFundTransaction(data: typeof fundTransactions.$inferInsert) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db.insert(fundTransactions).values(data);
-}
-
-export async function listFundTransactions(userId?: number, page = 1, limit = 20) {
-  const db = await getDb();
-  if (!db) return { items: [], total: 0 };
-  const offset = (page - 1) * limit;
-  const where = userId ? eq(fundTransactions.userId, userId) : undefined;
-  const items = where
-    ? await db.select().from(fundTransactions).where(where).orderBy(desc(fundTransactions.createdAt)).limit(limit).offset(offset)
-    : await db.select().from(fundTransactions).orderBy(desc(fundTransactions.createdAt)).limit(limit).offset(offset);
-  const countQuery = where
-    ? await db.select({ count: sql<number>`count(*)` }).from(fundTransactions).where(where)
-    : await db.select({ count: sql<number>`count(*)` }).from(fundTransactions);
-  return { items, total: Number(countQuery[0].count) };
-}
-
 // ─── System Config ─────────────────────────────────────────────────────────────
 export async function getSystemConfig(key: string) {
   const db = await getDb();
@@ -656,87 +488,20 @@ export async function getAdminDashboardStats() {
   const db = await getDb();
   if (!db) return null;
   const [userCount] = await db.select({ count: sql<number>`count(*)` }).from(users);
-  const [depositStats] = await db.select({
-    total: sql<string>`COALESCE(SUM(amount), 0)`,
-    pending: sql<number>`SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END)`,
-  }).from(deposits).where(eq(deposits.status, "approved"));
-  const [withdrawalStats] = await db.select({
-    total: sql<string>`COALESCE(SUM(amount), 0)`,
-    pending: sql<number>`SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END)`,
-  }).from(withdrawals);
   // 以平仓订单为唯一数据源
   const [orderStats] = await db.select({
     totalProfit: sql<string>`COALESCE(SUM(CASE WHEN netPnl > 0 THEN netPnl ELSE 0 END), 0)`,
     totalLoss: sql<string>`COALESCE(SUM(CASE WHEN netPnl < 0 THEN ABS(netPnl) ELSE 0 END), 0)`,
-    totalDeducted: sql<string>`COALESCE(SUM(revenueShareDeducted), 0)`,
     abnormal: sql<number>`SUM(CASE WHEN isAbnormal = 1 THEN 1 ELSE 0 END)`,
   }).from(copyOrders).where(sql`action IN ('close_long', 'close_short') AND status = 'closed'`);
-  // 分给推荐人：只统计平仓订单关联的分成记录
-  const [shareStats] = await db.select({
-    total: sql<string>`COALESCE(SUM(${revenueShareRecords.amount}), 0)`,
-  }).from(revenueShareRecords)
-    .innerJoin(copyOrders, eq(revenueShareRecords.copyOrderId, copyOrders.id))
-    .where(sql`${copyOrders.action} IN ('close_long', 'close_short') AND ${copyOrders.status} = 'closed'`);
-  const totalDeducted = parseFloat(orderStats.totalDeducted || "0");
-  const totalRevenueShare = parseFloat(shareStats.total || "0");
   return {
     totalUsers: Number(userCount.count),
-    totalDeposits: parseFloat(depositStats.total || "0"),
-    pendingDeposits: Number(depositStats.pending || 0),
-    totalWithdrawals: parseFloat(withdrawalStats.total || "0"),
-    pendingWithdrawals: Number(withdrawalStats.pending || 0),
-    // 用户维度
     totalProfit: parseFloat(orderStats.totalProfit || "0"),
     totalLoss: parseFloat(orderStats.totalLoss || "0"),
-    // 平台收入维度
-    totalDeducted,                              // 从用户余额扣除的服务费总额
-    totalRevenueShare,                          // 分给推荐人的分成总额
-    platformNetRevenue: totalDeducted - totalRevenueShare, // 平台净收入
     abnormalOrders: Number(orderStats.abnormal || 0),
   };
 }
 
-export async function getTeamStats(userId: number) {
-  const db = await getDb();
-  if (!db) return { directCount: 0, totalCount: 0, teamProfit: 0, teamRevenueShare: 0 };
-  // Direct referrals count
-  const [direct] = await db.select({ count: sql<number>`count(*)` }).from(users).where(eq(users.referrerId, userId));
-  // Recursively collect ALL team member IDs across all levels (BFS)
-  const allTeamIds: number[] = [];
-  let currentLevelIds = (await db.select({ id: users.id }).from(users).where(eq(users.referrerId, userId))).map(m => m.id);
-  const directIds = [...currentLevelIds];
-  while (currentLevelIds.length > 0) {
-    allTeamIds.push(...currentLevelIds);
-    const nextLevel = await db.select({ id: users.id }).from(users)
-      .where(sql`referrerId IN (${currentLevelIds.join(",")})`);
-    currentLevelIds = nextLevel.map(m => m.id);
-  }
-  const totalCount = allTeamIds.length;
-  // 团队盈亏：以平仓订单为唯一数据源
-  let teamProfit = 0;
-  if (allTeamIds.length > 0) {
-    const [profitResult] = await db.select({ total: sql<string>`COALESCE(SUM(netPnl), 0)` })
-      .from(copyOrders).where(sql`userId IN (${allTeamIds.join(",")}) AND action IN ('close_long', 'close_short') AND status = 'closed'`);
-    teamProfit = parseFloat(profitResult.total || "0");
-  }
-  // 收到的分成：只统计平仓订单关联的分成记录
-  const [shareResult] = await db.select({ total: sql<string>`COALESCE(SUM(${revenueShareRecords.amount}), 0)` })
-    .from(revenueShareRecords)
-    .innerJoin(copyOrders, eq(revenueShareRecords.copyOrderId, copyOrders.id))
-    .where(
-      and(
-        eq(revenueShareRecords.recipientId, userId),
-        sql`${copyOrders.action} IN ('close_long', 'close_short')`,
-        eq(copyOrders.status, 'closed')
-      )
-    );
-  return {
-    directCount: Number(direct.count),
-    totalCount,
-    teamProfit,
-    teamRevenueShare: parseFloat(shareResult.total || "0"),
-  };
-}
 
 export async function getMyInvitees(userId: number) {
   const db = await getDb();
@@ -750,3 +515,21 @@ export async function getMyInvitees(userId: number) {
     createdAt: users.createdAt,
   }).from(users).where(eq(users.referrerId, userId)).orderBy(sql`${users.createdAt} DESC`);
 }
+
+// ─── Batch Query Helpers (for copy engine performance) ───────────────────────
+
+/**
+ * Batch-fetch multiple exchange APIs by their IDs in a single query.
+ * Returns a Map<id, api> for O(1) lookup.
+ */
+export async function batchGetExchangeApis(ids: number[]): Promise<Map<number, typeof exchangeApis.$inferSelect>> {
+  const db = await getDb();
+  const result = new Map<number, typeof exchangeApis.$inferSelect>();
+  if (!db || ids.length === 0) return result;
+  const { inArray } = await import("drizzle-orm");
+  const rows = await db.select().from(exchangeApis).where(inArray(exchangeApis.id, ids));
+  for (const row of rows) result.set(row.id, row);
+  return result;
+}
+
+

@@ -103,7 +103,7 @@ export default function ExchangeApi() {
                   <Label>交易所</Label>
                   <Select value={exchange} onValueChange={(v) => { setExchange(v as ExchangeType); setPassphrase(""); }}>
                     <SelectTrigger className="bg-input border-border"><SelectValue /></SelectTrigger>
-                    <SelectContent className="bg-card border-border" position="popper" sideOffset={4}>
+                    <SelectContent className="bg-card border-border">
                       {EXCHANGES.map((ex) => (
                         <SelectItem key={ex.value} value={ex.value}>{ex.label}</SelectItem>
                       ))}

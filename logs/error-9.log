@@ -1,0 +1,13 @@
+2026-04-10 15:30:01: TypeError [ERR_INVALID_ARG_TYPE]: The "path" argument must be of type string. Received undefined
+    at new NodeError (node:internal/errors:393:5)
+    at validateString (node:internal/validators:163:11)
+    at Object.resolve (node:path:1098:7)
+    at serveStatic (file:///www/wwwroot/copy-trading/dist/index.js:4113:25)
+    at startServer (file:///www/wwwroot/copy-trading/dist/index.js:4158:5)
+    at file:///www/wwwroot/copy-trading/dist/index.js:4171:1
+    at ModuleJob.run (node:internal/modules/esm/module_job:193:25)
+    at async Promise.all (index 0)
+    at async ESMLoader.import (node:internal/modules/esm/loader:530:24)
+    at async importModuleDynamicallyWrapper (node:internal/vm/module:438:15) {
+  code: 'ERR_INVALID_ARG_TYPE'
+}

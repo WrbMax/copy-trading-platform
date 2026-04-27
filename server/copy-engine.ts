@@ -28,6 +28,8 @@ import {
   getUserById,
   updateUser,
   disableAllUserStrategies,
+  batchGetExchangeApis,
+
 } from "./db";
 import { decrypt } from "./crypto";
 import {
@@ -52,7 +54,6 @@ import {
   getBybitInstrument,
   toBybitSymbol,
   getBybitOrderDetail,
-  getBybitClosedPnl,
 } from "./bybit-client";
 import {
   BitgetCredentials,
@@ -75,7 +76,7 @@ import {
   getGateOrderDetail,
 } from "./gate-client";
 import { getOkxOrderDetail } from "./okx-client";
-import { processRevenueShare } from "./revenue-share";
+// isSubscriptionActive replaced by batchGetSubscriptionStatus for performance
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -267,19 +268,37 @@ async function executeCopyTrades(sourceId: number, change: PositionChange) {
     return;
   }
 
-  // ── Pre-fetch shared data ONCE (avoid repeated API calls per user) ──
+  // ── Pre-fetch ALL shared data ONCE before any per-user work ──
+  const isOpenAction = ["open_long", "open_short", "add_long", "add_short"].includes(change.action);
+
+  // 1. Batch-fetch all exchange APIs in one DB query
+  const apiIds = userStrategies.map(us => us.exchangeApiId);
+  const apiMap = await batchGetExchangeApis(apiIds);
+
+
+
+  // 3. Pre-fetch OKX instrument info (cached)
   const instrument = await getInstrument(change.instId);
   const ctVal = instrument ? parseFloat(instrument.ctVal) : 0.01;
 
-  // Pre-fetch exchange-specific instrument info (one per exchange type)
+  // 4. Pre-fetch exchange-specific instrument info (one per exchange type, all cached)
   const binanceSymbol = toBinanceSymbol(change.instId);
-  const [binanceInfo] = await Promise.all([
+  const bybitSymbol = toBybitSymbol(change.instId);
+  const gateContract = toGateContract(change.instId);
+  const bitgetSymbol = toBitgetSymbol(change.instId);
+  const [binanceInfo, bybitInfo, gateInfo, bitgetInfo] = await Promise.all([
     getBinanceInstrument(binanceSymbol),
+    getBybitInstrument(bybitSymbol),
+    getGateInstrument(gateContract),
+    getBitgetInstrument(bitgetSymbol),
   ]);
+
+  console.log(`[CopyEngine] Pre-fetch done: apis=${apiMap.size}, subs=${subMap.size}, ctVal=${ctVal}`);
 
   // ── Execute all users in PARALLEL ──
   async function executeForUser(us: typeof userStrategies[0]): Promise<boolean> {
-    const api = await getExchangeApiById(us.exchangeApiId);
+    // Use pre-fetched API (no DB query per user)
+    const api = apiMap.get(us.exchangeApiId);
     if (!api || !api.isActive) {
       console.log(`[CopyEngine] Skipping user ${us.userId}: API not active`);
       return false;
@@ -288,82 +307,81 @@ async function executeCopyTrades(sourceId: number, change: PositionChange) {
     const userExchange = (api.exchange || "okx").toLowerCase();
     const multiplier = parseFloat(us.multiplier);
 
-    // ── Balance check: skip and pause strategy if user balance is 0 on open actions ──
-    const isOpenAction = ["open_long", "open_short", "add_long", "add_short"].includes(change.action);
+    // ── Subscription check using pre-fetched data (no DB query per user) ──
     if (isOpenAction) {
-      const user = await getUserById(us.userId);
-      if (user && parseFloat(user.balance as string) <= 0) {
-        console.log(`[CopyEngine] ⚠️ User ${us.userId} balance is 0, pausing all strategies`);
-        await disableAllUserStrategies(us.userId);
+      const sub = subMap.get(us.userId);
+      const active = sub ? (sub.canRunBasic || sub.canRunAdvanced) : false;
+      if (!active) {
+        console.log(`[CopyEngine] ⚠️ User ${us.userId} subscription expired, pausing all strategies`);
+        // Async: disable strategies without blocking the order path
+        disableAllUserStrategies(us.userId).catch(() => {});
         return false;
       }
     }
 
     // Calculate order size based on exchange type
-    let sz: string;           // 各交易所原生单位（用于实际下单）
-    let ethQty: number;       // 统一换算为 ETH 数量（用于存库显示）
+    let sz: string;
     let exchangeOrderId: string | undefined;
 
     // ── 统一仓位计算：先换算为 ETH 数量，再转换为各交易所合约数 ──
     // 信号源是 OKX，ctVal = 0.1 ETH/张
     // baseEthQty = 信号张数 × 信号ctVal × 用户倍数  （单位：ETH）
     const baseEthQty = change.contractsDelta * ctVal * multiplier;
-    // 信号源 ETH 数量（不含用户倍数，用于 signalQuantity 存库）
-    const signalEthQty = change.contractsDelta * ctVal;
 
     if (userExchange === "binance") {
       // Binance 直接用 ETH 数量下单
       const precision = binanceInfo?.quantityPrecision ?? 3;
       const minQty = parseFloat(binanceInfo?.minQty ?? "0.001");
+      // 统一：不做额外取整，直接用 baseEthQty（除非低于最小值）
       let finalQty = baseEthQty;
       if (finalQty < minQty) finalQty = minQty;
+      // 只做精度截断，不额外向下取整
       sz = finalQty.toFixed(precision);
-      ethQty = parseFloat(sz);
-      console.log(`[CopyEngine] Binance calc: user=${us.userId}, contracts=${change.contractsDelta}, ctVal=${ctVal}, mult=${multiplier}, baseEthQty=${baseEthQty}, finalSz=${sz} ETH`);
+      console.log(`[CopyEngine] Binance calc: user=${us.userId}, contracts=${change.contractsDelta}, ctVal=${ctVal}, mult=${multiplier}, baseEthQty=${baseEthQty}, finalSz=${sz}`);
     } else if (userExchange === "bybit") {
-      // Bybit 也直接用 ETH 数量下单
-      const bybitSymbol = toBybitSymbol(change.instId);
-      const bybitInfo = await getBybitInstrument(bybitSymbol);
+      // Bybit 也直接用 ETH 数量下单 (use pre-fetched bybitInfo)
       const step = parseFloat(bybitInfo?.qtyStep ?? "0.001");
       const minQty = parseFloat(bybitInfo?.minOrderQty ?? "0.001");
       const rounded = Math.max(minQty, Math.floor(baseEthQty / step) * step);
       const decimals = step.toString().includes(".") ? step.toString().split(".")[1].length : 0;
       sz = rounded.toFixed(decimals);
-      ethQty = parseFloat(sz);
-      console.log(`[CopyEngine] Bybit calc: user=${us.userId}, contracts=${change.contractsDelta}, ctVal=${ctVal}, mult=${multiplier}, baseEthQty=${baseEthQty}, finalSz=${sz} ETH`);
+      console.log(`[CopyEngine] Bybit calc: user=${us.userId}, contracts=${change.contractsDelta}, ctVal=${ctVal}, mult=${multiplier}, baseEthQty=${baseEthQty}, finalSz=${sz}`);
     } else if (userExchange === "bitget") {
-      // Bitget USDT-M 永续：1张 = 0.01 ETH
-      const bitgetCtVal = 0.01;
+      // Bitget USDT-M 永续：张大从预取的 bitgetInfo.sizeMultiplier（默认 0.01 ETH/张）
+      const bitgetCtVal = bitgetInfo ? parseFloat(bitgetInfo.sizeMultiplier ?? "0.01") : 0.01;
+      const bitgetMinSz = bitgetInfo ? parseInt(bitgetInfo.minTradeNum ?? "1", 10) : 1;
       const bitgetContracts = Math.floor(baseEthQty / bitgetCtVal);
-      const minSzBitget = 1;
-      sz = Math.max(minSzBitget, bitgetContracts).toString();
-      ethQty = parseFloat(sz) * bitgetCtVal; // 换算回 ETH
-      console.log(`[CopyEngine] Bitget calc: user=${us.userId}, contracts=${change.contractsDelta}, ctVal=${ctVal}, mult=${multiplier}, baseEthQty=${baseEthQty}, bitgetContracts=${sz}, ethQty=${ethQty} ETH`);
+      sz = Math.max(bitgetMinSz, bitgetContracts).toString();
+      console.log(`[CopyEngine] Bitget calc: user=${us.userId}, contracts=${change.contractsDelta}, ctVal=${ctVal}, mult=${multiplier}, baseEthQty=${baseEthQty}, bitgetCtVal=${bitgetCtVal}, bitgetContracts=${bitgetContracts}, finalSz=${sz}`);
     } else if (userExchange === "gate") {
-      // Gate.io ETH_USDT：1张 = 0.01 ETH（需从合约信息获取）
-      const gateInstrument = await getGateInstrument(toGateContract(change.instId));
-      const gateCtVal = gateInstrument ? parseFloat(gateInstrument.quanto_multiplier ?? "0.01") : 0.01;
+      // Gate.io ETH_USDT：1张 = 0.01 ETH（use pre-fetched gateInfo）
+      const gateCtVal = gateInfo ? parseFloat(gateInfo.quanto_multiplier ?? "0.01") : 0.01;
       const gateContracts = Math.floor(baseEthQty / gateCtVal);
       const minSzGate = 1;
       sz = Math.max(minSzGate, gateContracts).toString();
-      ethQty = parseFloat(sz) * gateCtVal; // 换算回 ETH
-      console.log(`[CopyEngine] Gate calc: user=${us.userId}, contracts=${change.contractsDelta}, ctVal=${ctVal}, mult=${multiplier}, baseEthQty=${baseEthQty}, gateContracts=${sz}, ethQty=${ethQty} ETH`);
+      console.log(`[CopyEngine] Gate calc: user=${us.userId}, contracts=${change.contractsDelta}, ctVal=${ctVal}, mult=${multiplier}, baseEthQty=${baseEthQty}, gateCtVal=${gateCtVal}, gateContracts=${gateContracts}, finalSz=${sz}`);
     } else {
       // OKX：信号源也是 OKX，ctVal 相同（0.1 ETH/张）
+      // 统一：直接用 baseEthQty 换算为张数，不额外向下取整
       const minSz = instrument ? parseFloat(instrument.minSz) : 0.01;
       const lotSz = instrument ? parseFloat(instrument.lotSz) : 0.01;
       let rawContracts = baseEthQty / ctVal; // = contractsDelta * multiplier
+      // 只做 lotSz 对齐（四舍五入，而非向下取整）
       let alignedContracts = Math.round(rawContracts / lotSz) * lotSz;
       if (alignedContracts < minSz) alignedContracts = minSz;
       const lotDecimals = lotSz.toString().includes(".") ? lotSz.toString().split(".")[1].length : 0;
       sz = alignedContracts.toFixed(lotDecimals);
-      ethQty = alignedContracts * ctVal; // 换算为 ETH
-      console.log(`[CopyEngine] OKX calc: user=${us.userId}, contracts=${change.contractsDelta}, ctVal=${ctVal}, mult=${multiplier}, baseEthQty=${baseEthQty}, okxContracts=${sz}, ethQty=${ethQty} ETH`);
+      console.log(`[CopyEngine] OKX calc: user=${us.userId}, contracts=${change.contractsDelta}, ctVal=${ctVal}, mult=${multiplier}, baseEthQty=${baseEthQty}, rawContracts=${rawContracts}, alignedContracts=${alignedContracts}, finalSz=${sz}`);
     }
 
-    // Insert pending order record
-    // signalQuantity: 信号源原始数量（ETH，不含用户倍数）
-    // actualQuantity: 实际下单数量（ETH，统一单位，含用户倍数）
+    // Check signal freshness BEFORE placing order (no DB write yet)
+    const elapsed = (Date.now() - signalTime) / 1000;
+    if (elapsed > SIGNAL_MAX_AGE_SECONDS) {
+      console.warn(`[CopyEngine] ⏰ Signal too old (${elapsed.toFixed(1)}s) for user ${us.userId}, skipping`);
+      return false;
+    }
+
+    // ── Create order record BEFORE placing on exchange so failures are always visible ──
     const orderId = await createCopyOrder({
       userId: us.userId,
       signalLogId: logId,
@@ -373,22 +391,14 @@ async function executeCopyTrades(sourceId: number, change: PositionChange) {
       symbol: change.instId,
       action: dbAction,
       multiplier: us.multiplier,
-      signalQuantity: signalEthQty.toFixed(8),  // 统一为 ETH
-      actualQuantity: ethQty.toFixed(8),         // 统一为 ETH
+      signalQuantity: change.contractsDelta.toFixed(8),
+      actualQuantity: sz,
       openPrice: change.avgPx > 0 ? change.avgPx.toFixed(8) : undefined,
       openTime: new Date(),
       status: "pending",
     });
 
-    // Check signal freshness — skip if too old
-    const elapsed = (Date.now() - signalTime) / 1000;
-    if (elapsed > SIGNAL_MAX_AGE_SECONDS) {
-      console.warn(`[CopyEngine] ⏰ Signal too old (${elapsed.toFixed(1)}s) for user ${us.userId}, skipping`);
-      await updateCopyOrder(orderId, { status: "failed", errorMessage: `信号超时 (${elapsed.toFixed(1)}s)` });
-      return false;
-    }
-
-    // Execute on exchange
+    // Execute on exchange (critical path — minimize latency)
     if (userExchange === "binance") {
       const binCreds: BinanceCredentials = {
         apiKey: decrypt(api.apiKeyEncrypted),
@@ -488,6 +498,13 @@ async function executeCopyTrades(sourceId: number, change: PositionChange) {
     const orderTime = Date.now() - signalTime;
     console.log(`[CopyEngine] ✅ User ${us.userId}: ${change.action} ${sz} on ${change.instId}, ordId=${exchangeOrderId}, latency=${orderTime}ms`);
 
+    // ── Update order record with exchange result ──
+    if (exchangeOrderId) {
+      await updateCopyOrder(orderId, { exchangeOrderId });
+    } else {
+      await updateCopyOrder(orderId, { status: "failed", errorMessage: "交易所未返回订单ID" });
+    }
+
     const isCloseAction = ["close_long", "close_short", "reduce_long", "reduce_short"].includes(change.action);
 
     if (isCloseAction && exchangeOrderId) {
@@ -506,7 +523,7 @@ async function executeCopyTrades(sourceId: number, change: PositionChange) {
         let fee = 0;
         let realizedPnl = 0; // Direct from exchange API
 
-        // Query exchange for close order fill details
+        // Query exchange for close order fill details — use exchange-provided realizedPnl
         if (userExchange === "binance") {
           const symbol = toBinanceSymbol(change.instId);
           const detail = await getBinanceOrderDetail(
@@ -515,7 +532,6 @@ async function executeCopyTrades(sourceId: number, change: PositionChange) {
           );
           closePrice = parseFloat(detail.avgPrice) || 0;
           fee = Math.abs(parseFloat(detail.commission) || 0);
-          // Use API realizedPnl directly — this matches what users see in Binance
           realizedPnl = parseFloat(detail.realizedPnl) || 0;
         } else if (userExchange === "bybit") {
           const symbol = toBybitSymbol(change.instId);
@@ -525,11 +541,7 @@ async function executeCopyTrades(sourceId: number, change: PositionChange) {
           );
           closePrice = parseFloat(detail.avgPrice) || 0;
           fee = Math.abs(parseFloat(detail.cumExecFee) || 0);
-          // Query closed PnL from Bybit /v5/position/closed-pnl endpoint
-          realizedPnl = await getBybitClosedPnl(
-            { apiKey: decrypt(api.apiKeyEncrypted), secretKey: decrypt(api.secretKeyEncrypted) },
-            symbol, exchangeOrderId
-          );
+          // Bybit order API doesn't return PnL directly; will fallback to manual calc below
         } else if (userExchange === "bitget") {
           const symbol = toBitgetSymbol(change.instId);
           const detail = await getBitgetOrderDetail(
@@ -558,44 +570,26 @@ async function executeCopyTrades(sourceId: number, change: PositionChange) {
           realizedPnl = parseFloat(detail.pnl) || 0;
         }
 
-        // Find ALL matching open orders for this user/symbol/side
+        // Find ALL matching open orders for this user/symbol/side and mark them as closed
         const allOpenOrders = await findAllUserOpenOrders(us.userId, change.instId, change.action);
-        const openOrder = allOpenOrders[0] || null; // Keep for backward compat (close order record)
 
-        // ── Distribute PnL across ALL open orders ──
-        // For Binance: calculate realizedPnl per-order using open/close prices (avoids FIFO distortion)
-        // For other exchanges: use exchange-provided realizedPnl distributed proportionally by qty
-        let rawPnl = realizedPnl; // For non-binance exchanges
-
+        // Mark all open orders as closed (update closePrice/closeTime/status only — NO PnL backfill)
         if (allOpenOrders.length > 0) {
-          // Calculate total quantity across all open orders
-          const totalQty = allOpenOrders.reduce((sum, o) => sum + parseFloat(o.actualQuantity || "0"), 0);
-
-          // All exchanges: use exchange-provided realizedPnl, distribute proportionally by qty
-          // This ensures PnL matches what users see in their exchange account
           for (const openOrd of allOpenOrders) {
-            const ordQty = parseFloat(openOrd.actualQuantity || "0");
-            const ratio = totalQty > 0 ? ordQty / totalQty : 1 / allOpenOrders.length;
-            const ordRawPnl = rawPnl * ratio;
-            const ordFee = fee * ratio;
-            const ordNetPnl = ordRawPnl - ordFee;
-
             await updateCopyOrder(openOrd.id, {
               closePrice: closePrice.toFixed(8),
               closeTime: new Date(),
               closeOrderId: exchangeOrderId,
-              realizedPnl: ordRawPnl.toFixed(8),
-              fee: ordFee.toFixed(8),
-              netPnl: ordNetPnl.toFixed(8),
               status: "closed",
             });
-            console.log(`[CopyEngine] 📊 User ${us.userId} order ${openOrd.id}: ratio=${ratio.toFixed(4)}, netPnl=${ordNetPnl.toFixed(4)}`);
           }
         }
 
+        // Always use exchange-provided realizedPnl directly — never calculate manually
+        const rawPnl = realizedPnl;
         const netPnl = rawPnl - fee;
 
-        // Update the close order record with price and PnL info
+        // Write PnL data ONLY to the close order record (direct from exchange)
         await updateCopyOrder(orderId, {
           openPrice: closePrice.toFixed(8),
           closePrice: closePrice.toFixed(8),
@@ -604,42 +598,27 @@ async function executeCopyTrades(sourceId: number, change: PositionChange) {
           netPnl: netPnl.toFixed(8),
         });
 
-        // Note: totalProfit/totalLoss on users table is NOT updated here.
-        // The frontend stats are computed live from copy_orders (open_long/open_short only)
-        // via getUserOrderStats(), which is the single source of truth.
-
         console.log(`[CopyEngine] 📊 User ${us.userId}: totalPnl=${rawPnl.toFixed(4)}, fee=${fee.toFixed(4)}, netPnl=${netPnl.toFixed(4)}, closePrice=${closePrice}, openOrders=${allOpenOrders.length}`);
 
-        // Trigger revenue share for profitable orders (use total netPnl)
-        // Always use the close order's orderId so revenueShareDeducted is written to the close order
-        const revenueOrderId = orderId;
-        if (netPnl > 0) {
-          try {
-            await processRevenueShare({
-              copyOrderId: revenueOrderId,
-              traderId: us.userId,
-              netPnl,
-            });
-            console.log(`[CopyEngine] 💰 Revenue share processed for user ${us.userId}, netPnl=${netPnl.toFixed(4)}`);
-          } catch (rsErr: unknown) {
-            const rsMsg = rsErr instanceof Error ? rsErr.message : String(rsErr);
-            console.error(`[CopyEngine] ⚠️ Revenue share failed for user ${us.userId}: ${rsMsg}`);
-          }
-        }
+        // 分佣制：扣除收益分成 (由后台任务处理或即时结算)
       } catch (pnlErr: unknown) {
         const pnlMsg = pnlErr instanceof Error ? pnlErr.message : String(pnlErr);
         console.error(`[CopyEngine] ⚠️ PnL finalization failed for user ${us.userId}: ${pnlMsg}`);
       }
     } else {
-      // Open order: set to 'open' status (use signal avgPx as initial price)
-      await updateCopyOrder(orderId, {
-        status: "open",
-        exchangeOrderId: exchangeOrderId,
-        openTime: new Date(),
-      });
-
-      // Async: query actual fill price from exchange and update openPrice
+      // Open order: update status and async-fetch actual fill price
+      // Both are non-blocking — return true immediately after exchange order placed
       if (exchangeOrderId) {
+        // Async: update status + fetch actual fill price without blocking
+        (async () => {
+          try {
+            await updateCopyOrder(orderId, {
+              status: "open",
+              exchangeOrderId: exchangeOrderId,
+              openTime: new Date(),
+            });
+          } catch (e) { /* ignore */ }
+        })();
         (async () => {
           try {
             let actualOpenPrice: number | null = null;
@@ -689,6 +668,9 @@ async function executeCopyTrades(sourceId: number, change: PositionChange) {
             console.warn(`[CopyEngine] ⚠️ Failed to fetch actual open price for user ${us.userId} order ${orderId}: ${msg}`);
           }
         })();
+      } else {
+        // No exchangeOrderId: mark as failed asynchronously
+        updateCopyOrder(orderId, { status: "failed", errorMessage: "交易所未返回订单ID" }).catch(() => {});
       }
     }
     return true;

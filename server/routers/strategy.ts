@@ -10,7 +10,6 @@ import {
   getSystemConfig,
   getUserById,
   getUserOrderStats,
-  getUserRevenueShareStats,
   getUserStrategies,
   getUserStrategy,
   listAllCopyOrdersWithUser,
@@ -24,14 +23,14 @@ import {
   upsertUserStrategy,
   createCopyOrder,
 } from "../db";
-import { processRevenueShare } from "../revenue-share";
+
 import { encrypt, decrypt, maskApiKey } from "../crypto";
 import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
 import { adminProcedure } from "../_core/trpc";
 import { reloadSignalSource, getCopyEngineStatus } from "../copy-engine";
 
 export const strategyRouter = router({
-  // Public: list active strategies
+  // Public: list active strategies (returns all, tier filtering done on user-specific endpoints)
   list: publicProcedure.query(async () => {
     const sources = await listSignalSources(true);
     return sources.map((s) => ({
@@ -44,6 +43,26 @@ export const strategyRouter = router({
       expectedMonthlyReturnMax: s.expectedMonthlyReturnMax,
       description: s.description,
       isActive: s.isActive,
+      tier: (s as any).tier ?? 'basic',
+    }));
+  }),
+
+  // User: list all signal sources with user's subscription status
+  listForUser: protectedProcedure.query(async ({ ctx }) => {
+    const sources = await listSignalSources(true);
+    // 所有信号源都展示，分佣制下默认可用
+    return sources.map((s) => ({
+      id: s.id,
+      name: s.name,
+      symbol: s.symbol,
+      tradingPair: s.tradingPair,
+      referencePosition: s.referencePosition,
+      expectedMonthlyReturnMin: s.expectedMonthlyReturnMin,
+      expectedMonthlyReturnMax: s.expectedMonthlyReturnMax,
+      description: s.description,
+      isActive: s.isActive,
+      tier: (s as any).tier ?? 'basic',
+      canUse: true,
     }));
   }),
 
@@ -56,6 +75,9 @@ export const strategyRouter = router({
       ...s,
       signalSource: sources.find((src) => src.id === s.signalSourceId),
       exchangeApi: apis.find((a) => a.id === s.exchangeApiId),
+      canRunBasic: true,
+      canRunAdvanced: true,
+      activeTier: 'basic',
     }));
   }),
 
@@ -76,13 +98,7 @@ export const strategyRouter = router({
       const source = await getSignalSourceById(input.signalSourceId);
       if (!source) throw new TRPCError({ code: "NOT_FOUND", message: "策略不存在" });
 
-      // Balance check: forbid enabling strategy when balance is 0
-      if (input.isEnabled) {
-        const user = await getUserById(ctx.user.id);
-        if (!user || parseFloat(user.balance as string) <= 0) {
-          throw new TRPCError({ code: "BAD_REQUEST", message: "账户余额不足，请先充值后再开启策略" });
-        }
-      }
+
 
       await upsertUserStrategy({
         userId: ctx.user.id,
@@ -106,10 +122,6 @@ export const strategyRouter = router({
     // PnL data is kept accurate by the copy-engine which fetches real PnL
     // from exchange API at close time and updates the copy_orders table
     return getUserOrderStats(ctx.user.id);
-  }),
-
-  revenueShareStats: protectedProcedure.query(async ({ ctx }) => {
-    return getUserRevenueShareStats(ctx.user.id);
   }),
 
   // Admin: manage signal sources
@@ -140,6 +152,7 @@ export const strategyRouter = router({
       webhookSecret: z.string().optional(),
       exchange: z.enum(["okx", "binance", "bybit", "bitget", "gate"]).default("okx"),
       passphrase: z.string().optional(),
+      tier: z.enum(["basic", "advanced"]).default("basic"),
     }))
     .mutation(async ({ input }) => {
       await createSignalSource({
@@ -156,7 +169,8 @@ export const strategyRouter = router({
         exchange: input.exchange,
         passphraseEncrypted: input.passphrase ? encrypt(input.passphrase) : undefined,
         isActive: true,
-      });
+        tier: input.tier,
+      } as any);
       return { success: true };
     }),
 
@@ -176,9 +190,10 @@ export const strategyRouter = router({
       webhookSecret: z.string().optional(),
       exchange: z.enum(["okx", "binance", "bybit", "bitget", "gate"]).optional(),
       passphrase: z.string().optional(),
+      tier: z.enum(["basic", "advanced"]).optional(),
     }))
     .mutation(async ({ input }) => {
-      const { id, apiKey, apiSecret, webhookSecret: ws, exchange, passphrase, ...rest } = input;
+      const { id, apiKey, apiSecret, webhookSecret: ws, exchange, passphrase, tier, ...rest } = input;
       const updateData: Record<string, unknown> = {};
       if (rest.name !== undefined) updateData.name = rest.name;
       if (rest.symbol !== undefined) updateData.symbol = rest.symbol;
@@ -193,6 +208,7 @@ export const strategyRouter = router({
       if (ws !== undefined) updateData.webhookSecret = ws || null;
       if (exchange !== undefined) updateData.exchange = exchange;
       if (passphrase !== undefined) updateData.passphraseEncrypted = passphrase ? encrypt(passphrase) : null;
+      if (tier !== undefined) updateData.tier = tier;
       await updateSignalSource(id, updateData as any);
       // Reload the copy engine for this source
       reloadSignalSource(id).catch(console.error);

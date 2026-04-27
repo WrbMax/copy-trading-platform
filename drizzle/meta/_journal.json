@@ -43,6 +43,13 @@
       "when": 1774327348146,
       "tag": "0005_lucky_maestro",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "5",
+      "when": 1775118386207,
+      "tag": "0006_flat_deadpool",
+      "breakpoints": true
     }
   ]
 }

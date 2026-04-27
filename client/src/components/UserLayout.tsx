@@ -1,10 +1,8 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import { getLoginUrl } from "@/const";
 import {
-  BarChart3,
   ChevronDown,
-  Coins,
-  CreditCard,
+  Crown,
   Gift,
   LayoutDashboard,
   LineChart,
@@ -13,8 +11,6 @@ import {
   Menu,
   Settings,
   Shield,
-  TrendingUp,
-  Users,
   X,
   Zap,
 } from "lucide-react";
@@ -34,18 +30,18 @@ const navItems = [
   { href: "/", icon: LayoutDashboard, label: "首页" },
   { href: "/strategy", icon: Zap, label: "策略中心" },
   { href: "/orders", icon: ListOrdered, label: "订单记录" },
-  { href: "/earnings", icon: TrendingUp, label: "我的收益" },
-  { href: "/team", icon: Users, label: "团队收益" },
-  { href: "/funds", icon: CreditCard, label: "充值提现" },
-  { href: "/points", icon: Coins, label: "积分中心" },
+
+  { href: "/invite-reward", icon: Gift, label: "邀请奖励" },
   { href: "/exchange-api", icon: Settings, label: "API绑定" },
-  { href: "/invite", icon: Gift, label: "邀请好友" },
 ];
 
 export default function UserLayout({ children }: { children: React.ReactNode }) {
   const { user, loading, isAuthenticated, logout } = useAuth();
   const [location] = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
+
+
+
   const logoutMutation = trpc.auth.logout.useMutation({
     onSuccess: () => { logout(); window.location.href = "/login"; },
   });
@@ -69,16 +65,18 @@ export default function UserLayout({ children }: { children: React.ReactNode }) 
       <aside className={`fixed inset-y-0 left-0 z-50 w-64 bg-sidebar border-r border-sidebar-border transform transition-transform duration-300 lg:translate-x-0 ${mobileOpen ? "translate-x-0" : "-translate-x-full"}`}>
         {/* Logo */}
         <div className="h-16 flex items-center px-6 border-b border-sidebar-border">
-          <div className="flex items-center gap-2">
+          <Link href="/" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
             <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
               <LineChart className="w-5 h-5 text-primary-foreground" />
             </div>
-            <span className="font-bold text-lg text-sidebar-foreground">策略平台</span>
-          </div>
+            <span className="font-bold text-lg text-sidebar-foreground">AlphaRoute</span>
+          </Link>
           <button className="ml-auto lg:hidden text-muted-foreground" onClick={() => setMobileOpen(false)}>
             <X className="w-5 h-5" />
           </button>
         </div>
+
+
 
         {/* Nav */}
         <nav className="p-4 space-y-1">
@@ -127,6 +125,9 @@ export default function UserLayout({ children }: { children: React.ReactNode }) 
             <Menu className="w-5 h-5" />
           </button>
           <div className="flex-1" />
+
+
+
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" className="flex items-center gap-2 h-9">
@@ -138,6 +139,7 @@ export default function UserLayout({ children }: { children: React.ReactNode }) 
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-48">
+
               <DropdownMenuItem asChild>
                 <Link href="/exchange-api" className="flex items-center gap-2 w-full">
                   <Settings className="w-4 h-4" />API绑定

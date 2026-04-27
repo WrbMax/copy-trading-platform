@@ -1,3 +1,4 @@
+import { formatBeijingDateTime } from "@/lib/dateUtils";
 import { useState } from "react";
 import AdminLayout from "@/components/AdminLayout";
 import { trpc } from "@/lib/trpc";
@@ -12,21 +13,22 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, Edit, Zap, Key, Eye, EyeOff, Clock, Shield, ChevronLeft, ChevronRight, CheckCircle2, XCircle, Loader2, AlertCircle } from "lucide-react";
-import { formatDateTime as fmtDT } from "@/lib/time";
 import { toast } from "sonner";
 
 type ExchangeType = "okx" | "binance" | "bybit" | "bitget" | "gate";
+
+type TierType = "basic" | "advanced";
 
 const EMPTY_FORM: {
   name: string; symbol: string; tradingPair: string; referencePosition: string;
   expectedMonthlyReturnMin: string; expectedMonthlyReturnMax: string; description: string;
   apiKey: string; apiSecret: string; passphrase: string; webhookSecret: string;
-  exchange: ExchangeType;
+  exchange: ExchangeType; tier: TierType;
 } = {
   name: "", symbol: "", tradingPair: "", referencePosition: "", description: "",
   expectedMonthlyReturnMin: "", expectedMonthlyReturnMax: "",
   apiKey: "", apiSecret: "", passphrase: "", webhookSecret: "",
-  exchange: "okx",
+  exchange: "okx", tier: "basic",
 };
 
 const EXCHANGE_LABELS: Record<string, string> = {
@@ -54,7 +56,9 @@ const ORDER_STATUS_CONFIG: Record<string, { label: string; color: string }> = {
   cancelled: { label: "已取消", color: "text-muted-foreground" },
 };
 
-const formatDateTime = fmtDT;
+function formatDateTime(d: Date | string | null) {
+  return formatBeijingDateTime(d);
+}
 
 export default function AdminSignalSources() {
   const utils = trpc.useUtils();
@@ -106,6 +110,7 @@ export default function AdminSignalSources() {
       description: s.description || "",
       apiKey: "", apiSecret: "", passphrase: "", webhookSecret: s.webhookSecret || "",
       exchange: s.exchange || "okx",
+      tier: (s.tier as TierType) || "basic",
     });
     setOpen(true);
   };
@@ -123,6 +128,7 @@ export default function AdminSignalSources() {
       expectedMonthlyReturnMax: parseFloat(form.expectedMonthlyReturnMax),
       description: form.description || undefined,
       exchange: form.exchange as ExchangeType,
+      tier: form.tier as TierType,
     };
     const apiFields: Record<string, string | undefined> = {};
     if (form.apiKey) apiFields.apiKey = form.apiKey;
@@ -212,9 +218,14 @@ export default function AdminSignalSources() {
 
                   {s.description && <p className="text-xs text-muted-foreground">{s.description}</p>}
                   <div className="flex items-center justify-between">
-                    <Badge variant={s.isActive ? "default" : "secondary"} className="text-xs">
-                      {s.isActive ? <><span className="w-1.5 h-1.5 bg-current rounded-full mr-1 animate-pulse" />运行中</> : "已停用"}
-                    </Badge>
+                    <div className="flex items-center gap-1.5">
+                      <Badge variant={s.isActive ? "default" : "secondary"} className="text-xs">
+                        {s.isActive ? <><span className="w-1.5 h-1.5 bg-current rounded-full mr-1 animate-pulse" />运行中</> : "已停用"}
+                      </Badge>
+                      <Badge className={`text-xs ${s.tier === 'advanced' ? 'bg-yellow-500/15 text-yellow-400 border-yellow-500/30' : 'bg-blue-500/15 text-blue-400 border-blue-500/30'}`}>
+                        {s.tier === 'advanced' ? '进阶档' : '基础档'}
+                      </Badge>
+                    </div>
                     <div className="flex gap-1">
                       <Button size="sm" variant="ghost" onClick={() => openLogs(s)}>
                         <Clock className="w-4 h-4 mr-1" />日志
@@ -376,6 +387,23 @@ export default function AdminSignalSources() {
                   <Label className="text-xs">策略描述（可选）</Label>
                   <Input placeholder="简短描述策略逻辑" value={form.description} onChange={(e) => setForm(f => ({ ...f, description: e.target.value }))} className="bg-input border-border text-sm" />
                 </div>
+              </div>
+
+              <Separator />
+
+              {/* Tier selector */}
+              <div className="space-y-1">
+                <Label className="text-xs">订阅档次</Label>
+                <Select value={form.tier} onValueChange={(v) => setForm(f => ({ ...f, tier: v as TierType }))}>
+                  <SelectTrigger className="bg-input border-border text-sm">
+                    <SelectValue placeholder="选择档次" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="basic">基础档（订阅金额 1000~10000 USDT）</SelectItem>
+                    <SelectItem value="advanced">进阶档（订阅金额 10000 USDT 以上）</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">基础档用户只能看到基础档信号源，进阶档用户只能看到进阶档信号源</p>
               </div>
 
               <Separator />

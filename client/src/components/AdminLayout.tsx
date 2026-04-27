@@ -1,7 +1,7 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import {
-  BarChart3, ChevronDown, Coins, CreditCard, LayoutDashboard, LineChart,
-  ListOrdered, LogOut, Menu, Settings, Shield, TrendingUp, Users, X, Zap,
+  BarChart3, ChevronDown, Crown, LayoutDashboard, LineChart,
+  ListOrdered, LogOut, Menu, Settings, Shield, Users, X, Zap,
 } from "lucide-react";
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
@@ -16,9 +16,7 @@ const navItems = [
   { href: "/admin/users", icon: Users, label: "用户管理" },
   { href: "/admin/signals", icon: Zap, label: "信号源管理" },
   { href: "/admin/orders", icon: ListOrdered, label: "订单监控" },
-  { href: "/admin/funds", icon: CreditCard, label: "资金管理" },
-  { href: "/admin/points", icon: Coins, label: "积分管理" },
-  { href: "/admin/revenue-share", icon: TrendingUp, label: "收益分成" },
+
 ];
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
@@ -47,7 +45,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       {/* Sidebar */}
       <aside className={`fixed inset-y-0 left-0 z-50 w-60 bg-sidebar border-r border-sidebar-border transform transition-transform duration-300 lg:translate-x-0 ${mobileOpen ? "translate-x-0" : "-translate-x-full"}`}>
         <div className="h-16 flex items-center px-5 border-b border-sidebar-border">
-          <div className="flex items-center gap-2">
+          <Link href="/" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
             <div className="w-7 h-7 bg-primary rounded-lg flex items-center justify-center">
               <Shield className="w-4 h-4 text-primary-foreground" />
             </div>
@@ -55,7 +53,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
               <p className="font-bold text-sm text-sidebar-foreground">总后台管理</p>
               <p className="text-xs text-muted-foreground">Admin Panel</p>
             </div>
-          </div>
+          </Link>
           <button className="ml-auto lg:hidden text-muted-foreground" onClick={() => setMobileOpen(false)}>
             <X className="w-5 h-5" />
           </button>

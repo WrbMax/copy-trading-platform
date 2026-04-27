@@ -1,3 +1,4 @@
+import { formatBeijingDateTime } from "@/lib/dateUtils";
 import UserLayout from "@/components/UserLayout";
 import { trpc } from "@/lib/trpc";
 import { useState } from "react";
@@ -5,7 +6,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { TrendingUp, TrendingDown, ChevronLeft, ChevronRight, Clock, BarChart2 } from "lucide-react";
-import { formatShortDateTime } from "@/lib/time";
 
 function PnlCell({ value }: { value: string | null | undefined }) {
   if (!value) return <span className="text-muted-foreground text-xs">-</span>;
@@ -16,7 +16,9 @@ function PnlCell({ value }: { value: string | null | undefined }) {
   return <span className="text-muted-foreground text-xs">0.0000</span>;
 }
 
-const formatTime = formatShortDateTime;
+function formatTime(d: Date | string | null | undefined) {
+  return formatBeijingDateTime(d);
+}
 
 const ACTION_META: Record<string, { label: string; colorClass: string }> = {
   open_long:   { label: "开多", colorClass: "bg-profit/20 text-profit" },
@@ -132,7 +134,6 @@ export default function Orders() {
                           </td>
                           <td className="px-4 py-2.5 text-right font-mono text-xs">
                             {parseFloat(order.actualQuantity || "0").toFixed(4)}
-                            <span className="text-muted-foreground/60 ml-0.5">ETH</span>
                           </td>
                           <td className="px-4 py-2.5 text-right font-mono text-xs text-muted-foreground">
                             {price ? parseFloat(price).toFixed(2) : "-"}

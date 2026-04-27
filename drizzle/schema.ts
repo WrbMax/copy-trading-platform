@@ -28,6 +28,7 @@ export const users = mysqlTable("users", {
   lastPointsRedeemMonth: varchar("lastPointsRedeemMonth", { length: 30 }),
   revenueShareRatio: decimal("revenueShareRatio", { precision: 5, scale: 2 }).default("0").notNull(),
   isActive: boolean("isActive").default(true).notNull(),
+
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull(),
@@ -80,6 +81,7 @@ export const signalSources = mysqlTable("signal_sources", {
   webhookSecret: text("webhookSecret"),
   exchange: varchar("exchange", { length: 20 }).default("okx").notNull(),
   passphraseEncrypted: text("passphraseEncrypted"),
+  tier: varchar("tier", { length: 16 }).default("basic").notNull(), // 'basic' | 'advanced'
   isActive: boolean("isActive").default(true).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
@@ -238,3 +240,5 @@ export const systemConfig = mysqlTable("system_config", {
   description: text("description"),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
+
+
